@@ -1,0 +1,56 @@
+# ==========================================================
+# .gitignore - KeyCraft Password & Credential Manager
+# ==========================================================
+
+# ----------------------------------------------------------
+# CRITICAL: Credentials & Plain-Text Passwords (NEVER COMMIT)
+# ----------------------------------------------------------
+data/
+credentials.txt
+*.credentials
+*.credential
+passwords.txt
+secrets.txt
+secrets.json
+*.key
+
+# ----------------------------------------------------------
+# Logs & Diagnostic Dumps
+# ----------------------------------------------------------
+*.log
+logs/
+crash.log
+err.log
+out.log
+
+# ----------------------------------------------------------
+# Build Outputs & Executables
+# ----------------------------------------------------------
+bin/
+obj/
+build/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.ilk
+*.exp
+*.lib
+
+# ----------------------------------------------------------
+# IDE & Visual Studio Files
+# ----------------------------------------------------------
+.vs/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# ----------------------------------------------------------
+# OS Metadata
+# ----------------------------------------------------------
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
