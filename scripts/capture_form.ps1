@@ -21,7 +21,10 @@ Start-Sleep -Milliseconds 500
 
 $bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
 $form.DrawToBitmap($bmp, (New-Object System.Drawing.Rectangle 0, 0, $form.Width, $form.Height))
-$bmp.Save("$projectRoot\screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$targetDir = "$projectRoot\assets\screenshots"
+if (-not (Test-Path $targetDir)) { New-Item -ItemType Directory -Path $targetDir | Out-Null }
+$bmp.Save("$targetDir\screenshot_main.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$bmp.Save("$targetDir\screenshot.png", [System.Drawing.Imaging.ImageFormat]::Png)
 
 $form.Close()
-Write-Output "Screenshot successfully saved to screenshot.png ($($bmp.Width)x$($bmp.Height))"
+Write-Output "Screenshot successfully saved to assets\screenshots\screenshot_main.png ($($bmp.Width)x$($bmp.Height))"

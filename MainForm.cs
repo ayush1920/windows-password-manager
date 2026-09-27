@@ -21,7 +21,9 @@ namespace PasswordGui
         EyeOff,
         Key,
         Search,
-        Shield
+        Shield,
+        Settings,
+        Lock
     }
 
     public enum TitleButtonType
@@ -369,6 +371,8 @@ namespace PasswordGui
                 case ButtonIcon.Key: return "key";
                 case ButtonIcon.Search: return "search";
                 case ButtonIcon.Shield: return "shield";
+                case ButtonIcon.Settings: return "settings";
+                case ButtonIcon.Lock: return "lock";
                 default: return null;
             }
         }
@@ -386,6 +390,54 @@ namespace PasswordGui
             path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
             path.CloseFigure();
             return path;
+        }
+    }
+
+    /// <summary>
+    /// Forwards edge hit-tests from child controls to parent MainForm for seamless border resizing.
+    /// </summary>
+    public class EdgeResizeFilter : NativeWindow
+    {
+        private readonly Form targetForm;
+        private const int WM_NCHITTEST = 0x84;
+        private const int HTTRANSPARENT = -1;
+        private const int BorderMargin = 8;
+
+        public EdgeResizeFilter(Control ctrl, Form form)
+        {
+            this.targetForm = form;
+            if (ctrl.IsHandleCreated)
+            {
+                this.AssignHandle(ctrl.Handle);
+            }
+            else
+            {
+                ctrl.HandleCreated += delegate { this.AssignHandle(ctrl.Handle); };
+            }
+            ctrl.HandleDestroyed += delegate { this.ReleaseHandle(); };
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == WM_NCHITTEST && targetForm.WindowState == FormWindowState.Normal)
+            {
+                Point screenPt = new Point(m.LParam.ToInt32());
+                Point clientPt = targetForm.PointToClient(screenPt);
+
+                // Do not intercept titlebar buttons (close/max/min)
+                bool inTitleButtons = (clientPt.X >= targetForm.ClientSize.Width - 140 && clientPt.Y <= 42);
+
+                if (!inTitleButtons)
+                {
+                    if (clientPt.X <= BorderMargin || clientPt.X >= targetForm.ClientSize.Width - BorderMargin ||
+                        clientPt.Y <= BorderMargin || clientPt.Y >= targetForm.ClientSize.Height - BorderMargin)
+                    {
+                        m.Result = (IntPtr)HTTRANSPARENT;
+                        return;
+                    }
+                }
+            }
+            base.WndProc(ref m);
         }
     }
 
@@ -416,15 +468,28 @@ namespace PasswordGui
         // Left Panel (Directory & Search)
         private Panel panelSearch;
         private TextBox txtSearch;
+        private ComboBox cmbSearchColumn;
         private bool isSearchFocused = false;
         private ListView lvCredentials;
         private bool isAdjustingColumns = false;
         private ModernButton btnCopyPassword;
         private ModernButton btnDelete;
         private ModernButton btnRefresh;
+        private ModernButton btnSettings;
+
+        // System Tray & Keyboard Routing
+        private NotifyIcon notifyIcon;
+        private ContextMenuStrip trayMenu;
+        private bool hasShownTrayTip = false;
+        private KeyboardShortcutManager shortcutManager;
+        private AppSettings appSettings;
+        private GlobalHotkeyManager hotkeyManager;
 
         // Right Panel (Editor)
         private Label lblEditorHeader;
+        private TextBox txtSerialNo;
+        private ModernButton btnMoveUp;
+        private ModernButton btnMoveDown;
         private TextBox txtService;
         private TextBox txtUsername;
         private TextBox txtPassword;
@@ -519,8 +584,13 @@ namespace PasswordGui
             fontBold = new Font("Segoe UI", 9.25f, FontStyle.Bold);
             fontMono = new Font("Consolas", 10.5f, FontStyle.Regular);
 
+            appSettings = AppSettings.Load();
+            hotkeyManager = new GlobalHotkeyManager();
+            hotkeyManager.HotkeyPressed += delegate { RestoreFromTray(); };
+
             InitializeComponent();
             LoadCredentials();
+            this.ActiveControl = txtSearch;
         }
 
         private void InitializeComponent()
@@ -582,7 +652,7 @@ namespace PasswordGui
             btnMin = new TitleBarButton(TitleButtonType.Minimize);
             btnMin.Location = new Point(0, 0);
             btnMin.Size = new Size(46, 40);
-            btnMin.Click += delegate { this.WindowState = FormWindowState.Minimized; };
+            btnMin.Click += delegate { MinimizeToTray(); };
             panelButtons.Controls.Add(btnMin);
 
             btnMax = new TitleBarButton(TitleButtonType.Maximize);
@@ -598,6 +668,32 @@ namespace PasswordGui
             panelButtons.Controls.Add(btnClose);
 
             panelTitleBar.Controls.Add(panelButtons);
+
+            // Title Bar Settings Button (Placed directly to the left of window control buttons)
+            Panel btnTitleSettings = new Panel();
+            btnTitleSettings.Dock = DockStyle.Right;
+            btnTitleSettings.Size = new Size(40, 40);
+            btnTitleSettings.Cursor = Cursors.Hand;
+            bool isTitleSettingsHovered = false;
+            btnTitleSettings.MouseEnter += delegate { isTitleSettingsHovered = true; btnTitleSettings.Invalidate(); };
+            btnTitleSettings.MouseLeave += delegate { isTitleSettingsHovered = false; btnTitleSettings.Invalidate(); };
+            btnTitleSettings.Paint += delegate(object s, PaintEventArgs pe)
+            {
+                if (isTitleSettingsHovered)
+                {
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(28, 33, 46)))
+                    {
+                        pe.Graphics.FillRectangle(b, btnTitleSettings.ClientRectangle);
+                    }
+                }
+                Bitmap bmp = IconResources.GetIcon("settings");
+                if (bmp != null)
+                {
+                    IconHelper.DrawTintedIcon(pe.Graphics, bmp, new Rectangle(12, 12, 16, 16), isTitleSettingsHovered ? ColorPrimaryHover : ColorTextMuted);
+                }
+            };
+            btnTitleSettings.Click += delegate { OpenSettings(); };
+            panelTitleBar.Controls.Add(btnTitleSettings);
 
             // 1px Subtle Divider under Title Bar
             Panel titleDivider = new Panel();
@@ -622,7 +718,7 @@ namespace PasswordGui
             panelStatusBar.Controls.Add(statusDivider);
 
             lblStatusFile = new Label();
-            lblStatusFile.Text = "● Active Storage: " + System.IO.Path.GetFileName(service.StorageFilePath);
+            lblStatusFile.Text = "● Encrypted Vault: " + System.IO.Path.GetFileName(service.StorageFilePath) + " (AES-256)";
             lblStatusFile.Font = new Font("Segoe UI", 8.25f, FontStyle.Regular);
             lblStatusFile.ForeColor = ColorSuccess;
             lblStatusFile.Location = new Point(14, 6);
@@ -705,39 +801,78 @@ namespace PasswordGui
 
             panelRight.TabStop = false;
 
+            // Field: Serial Number (Remapping & Reordering)
+            Label lblSerial = CreateFieldLabel("SL NO", 18, 44);
+            panelRight.Controls.Add(lblSerial);
+
+            txtSerialNo = CreateInputTextBox(18, 64, 60);
+            txtSerialNo.TabIndex = 4;
+            txtSerialNo.TabStop = true;
+            panelRight.Controls.Add(txtSerialNo);
+
+            btnMoveUp = new ModernButton();
+            btnMoveUp.Text = "▲";
+            btnMoveUp.Location = new Point(84, 64);
+            btnMoveUp.Size = new Size(36, 26);
+            btnMoveUp.CornerRadius = 4.0f;
+            btnMoveUp.NormalBg = ColorSecondary;
+            btnMoveUp.HoverBg = ColorSecondaryHover;
+            btnMoveUp.BorderColor = ColorSecondaryBorder;
+            btnMoveUp.NormalFg = ColorTextPrimary;
+            btnMoveUp.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            btnMoveUp.TabIndex = 5;
+            btnMoveUp.TabStop = true;
+            btnMoveUp.Click += new EventHandler(BtnMoveUp_Click);
+            panelRight.Controls.Add(btnMoveUp);
+
+            btnMoveDown = new ModernButton();
+            btnMoveDown.Text = "▼";
+            btnMoveDown.Location = new Point(126, 64);
+            btnMoveDown.Size = new Size(36, 26);
+            btnMoveDown.CornerRadius = 4.0f;
+            btnMoveDown.NormalBg = ColorSecondary;
+            btnMoveDown.HoverBg = ColorSecondaryHover;
+            btnMoveDown.BorderColor = ColorSecondaryBorder;
+            btnMoveDown.NormalFg = ColorTextPrimary;
+            btnMoveDown.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            btnMoveDown.TabIndex = 6;
+            btnMoveDown.TabStop = true;
+            btnMoveDown.Click += new EventHandler(BtnMoveDown_Click);
+            panelRight.Controls.Add(btnMoveDown);
+
             // Field: Service
-            Label lblService = CreateFieldLabel("SERVICE / WEBSITE *", 18, 48);
+            Label lblService = CreateFieldLabel("SERVICE / WEBSITE *", 18, 98);
             panelRight.Controls.Add(lblService);
 
-            txtService = CreateInputTextBox(18, 70, 310);
-            txtService.TabIndex = 5;
+            txtService = CreateInputTextBox(18, 120, 310);
+            txtService.TabIndex = 7;
             txtService.TabStop = true;
             panelRight.Controls.Add(txtService);
 
             // Field: Username
-            Label lblUser = CreateFieldLabel("USERNAME / EMAIL", 18, 112);
+            Label lblUser = CreateFieldLabel("USERNAME / EMAIL", 18, 156);
             panelRight.Controls.Add(lblUser);
 
-            txtUsername = CreateInputTextBox(18, 134, 310);
-            txtUsername.TabIndex = 6;
+            txtUsername = CreateInputTextBox(18, 178, 310);
+            txtUsername.TabIndex = 8;
             txtUsername.TabStop = true;
             panelRight.Controls.Add(txtUsername);
 
             // Field: Password
-            Label lblPwd = CreateFieldLabel("PASSWORD *", 18, 176);
+            Label lblPwd = CreateFieldLabel("PASSWORD *", 18, 214);
             panelRight.Controls.Add(lblPwd);
 
-            txtPassword = CreateInputTextBox(18, 198, 226);
+            txtPassword = CreateInputTextBox(18, 236, 226);
             txtPassword.UseSystemPasswordChar = true;
             txtPassword.Font = fontMono;
-            txtPassword.TabIndex = 7;
+            txtPassword.TabIndex = 9;
             txtPassword.TabStop = true;
             txtPassword.TextChanged += new EventHandler(TxtPassword_TextChanged);
             panelRight.Controls.Add(txtPassword);
 
             // Toggle Password Button (5.0px rounded with Lucide Eye Icon)
             btnTogglePassword = new ModernButton();
-            btnTogglePassword.Location = new Point(250, 198);
+            btnTogglePassword.Location = new Point(250, 236);
             btnTogglePassword.Size = new Size(36, 26);
             btnTogglePassword.CornerRadius = 5.0f;
             btnTogglePassword.IconType = ButtonIcon.Eye;
@@ -745,14 +880,14 @@ namespace PasswordGui
             btnTogglePassword.HoverBg = ColorSecondaryHover;
             btnTogglePassword.BorderColor = ColorSecondaryBorder;
             btnTogglePassword.NormalFg = ColorTextMuted;
-            btnTogglePassword.TabIndex = 8;
+            btnTogglePassword.TabIndex = 10;
             btnTogglePassword.TabStop = true;
             btnTogglePassword.Click += new EventHandler(BtnTogglePassword_Click);
             panelRight.Controls.Add(btnTogglePassword);
 
             // Generate Random Password Button (5.0px rounded with Lucide Key Icon)
             btnGeneratePassword = new ModernButton();
-            btnGeneratePassword.Location = new Point(292, 198);
+            btnGeneratePassword.Location = new Point(292, 236);
             btnGeneratePassword.Size = new Size(36, 26);
             btnGeneratePassword.CornerRadius = 5.0f;
             btnGeneratePassword.IconType = ButtonIcon.Key;
@@ -760,7 +895,7 @@ namespace PasswordGui
             btnGeneratePassword.HoverBg = ColorPrimaryHover;
             btnGeneratePassword.BorderColor = ColorPrimary;
             btnGeneratePassword.NormalFg = Color.White;
-            btnGeneratePassword.TabIndex = 9;
+            btnGeneratePassword.TabIndex = 11;
             btnGeneratePassword.TabStop = true;
             btnGeneratePassword.Click += new EventHandler(BtnGeneratePassword_Click);
             panelRight.Controls.Add(btnGeneratePassword);
@@ -770,14 +905,14 @@ namespace PasswordGui
             lblStrengthStatus.Text = "Strength: None";
             lblStrengthStatus.Font = new Font("Segoe UI", 8.5f, FontStyle.Regular);
             lblStrengthStatus.ForeColor = ColorTextMuted;
-            lblStrengthStatus.Location = new Point(18, 230);
+            lblStrengthStatus.Location = new Point(18, 268);
             lblStrengthStatus.AutoSize = true;
             panelRight.Controls.Add(lblStrengthStatus);
 
             // Save Credential Button (5.0px rounded with Lucide Save Icon)
             btnSave = new ModernButton();
             btnSave.Text = "Save Credential";
-            btnSave.Location = new Point(18, 264);
+            btnSave.Location = new Point(18, 298);
             btnSave.Size = new Size(310, 38);
             btnSave.CornerRadius = 5.0f;
             btnSave.IconType = ButtonIcon.Save;
@@ -787,7 +922,7 @@ namespace PasswordGui
             btnSave.BorderColor = ColorPrimaryHover;
             btnSave.NormalFg = Color.White;
             btnSave.Font = fontBold;
-            btnSave.TabIndex = 10;
+            btnSave.TabIndex = 12;
             btnSave.TabStop = true;
             btnSave.Click += new EventHandler(BtnSave_Click);
             panelRight.Controls.Add(btnSave);
@@ -795,7 +930,7 @@ namespace PasswordGui
             // Clear Form Button (5.0px rounded with Lucide Plus Icon)
             btnClear = new ModernButton();
             btnClear.Text = "New / Clear Form";
-            btnClear.Location = new Point(18, 312);
+            btnClear.Location = new Point(18, 344);
             btnClear.Size = new Size(310, 32);
             btnClear.CornerRadius = 5.0f;
             btnClear.IconType = ButtonIcon.Plus;
@@ -805,7 +940,7 @@ namespace PasswordGui
             btnClear.BorderColor = ColorSecondaryBorder;
             btnClear.NormalFg = ColorTextMuted;
             btnClear.Font = fontRegular;
-            btnClear.TabIndex = 11;
+            btnClear.TabIndex = 13;
             btnClear.TabStop = true;
             btnClear.Click += new EventHandler(BtnClear_Click);
             panelRight.Controls.Add(btnClear);
@@ -815,7 +950,7 @@ namespace PasswordGui
             lblToast.Text = "✓ Saved successfully!";
             lblToast.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
             lblToast.ForeColor = ColorSuccess;
-            lblToast.Location = new Point(18, 356);
+            lblToast.Location = new Point(18, 386);
             lblToast.AutoSize = true;
             lblToast.Visible = false;
             panelRight.Controls.Add(lblToast);
@@ -834,13 +969,13 @@ namespace PasswordGui
             panelContent.Controls.Add(panelLeft);
             panelLeft.BringToFront();
 
-            // Search Bar Container (Integrated input bar: panel -> icon -> borderless textbox)
+            // Search Bar Container (Integrated input bar: panel -> icon -> borderless textbox -> column dropdown)
             panelSearch = new Panel();
             panelSearch.Dock = DockStyle.Top;
-            panelSearch.Height = 32;
+            panelSearch.Height = 34;
             panelSearch.BackColor = ColorBgInput;
             panelSearch.Padding = new Padding(2, 2, 2, 2);
-            panelSearch.Cursor = Cursors.IBeam;
+            panelSearch.Cursor = Cursors.Default;
             panelSearch.Paint += delegate(object s, PaintEventArgs pe)
             {
                 using (Pen borderPen = new Pen(isSearchFocused ? ColorPrimary : ColorBorder, 1f))
@@ -850,12 +985,11 @@ namespace PasswordGui
             };
 
             // Lucide Search Icon (16x16 inside search bar)
-            // Outer panel padding = 2px all across -> icon X = 2
             Panel panelSearchIcon = new Panel();
             panelSearchIcon.Size = new Size(16, 16);
-            panelSearchIcon.Location = new Point(2, (panelSearch.Height - 16) / 2);
+            panelSearchIcon.Location = new Point(4, (panelSearch.Height - 16) / 2);
             panelSearchIcon.BackColor = Color.Transparent;
-            panelSearchIcon.Cursor = Cursors.IBeam;
+            panelSearchIcon.Cursor = Cursors.Default;
             panelSearchIcon.Paint += delegate(object s, PaintEventArgs pe)
             {
                 Bitmap searchBmp = IconResources.GetIcon("search");
@@ -866,29 +1000,42 @@ namespace PasswordGui
             };
             panelSearch.Controls.Add(panelSearchIcon);
 
+            // Column selector dropdown on the right side of the search bar (Default: "Sl No")
+            cmbSearchColumn = new ComboBox();
+            cmbSearchColumn.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbSearchColumn.FlatStyle = FlatStyle.Flat;
+            cmbSearchColumn.BackColor = ColorBgInput;
+            cmbSearchColumn.ForeColor = ColorTextPrimary;
+            cmbSearchColumn.Cursor = Cursors.Default;
+            cmbSearchColumn.Font = new Font("Segoe UI", 9f);
+            cmbSearchColumn.Items.AddRange(new object[] { "Sl No", "Service", "Username", "All Columns" });
+            cmbSearchColumn.SelectedIndex = 0; // Default: Sl No
+            int cmbWidth = 110;
+            cmbSearchColumn.Size = new Size(cmbWidth, 24);
+            cmbSearchColumn.Location = new Point(Math.Max(50, panelSearch.ClientSize.Width - cmbWidth - 4), (panelSearch.Height - 24) / 2);
+            cmbSearchColumn.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            cmbSearchColumn.SelectedIndexChanged += delegate { ApplyFilter(); };
+            panelSearch.Controls.Add(cmbSearchColumn);
+
             // Input Box without borders:
-            // Outer panel left padding: 2px
-            // Search icon: 16px width (ends at 2 + 16 = 18px)
-            // Space between search icon and input box: 5px (reaches 23px)
-            // Input box padding: 4px on left (starts at 23 + 4 = 27px)
-            // Top padding: 2px outer + 4px inner centering adjustment (Y = 6px) to align Segoe UI 9.5pt text with 16x16 icon
+            int inputLeft = 4 + 16 + 6; // 26px
+            int inputTop = 8;
             txtSearch = new TextBox();
             txtSearch.BorderStyle = BorderStyle.None;
             txtSearch.BackColor = ColorBgInput;
             txtSearch.ForeColor = ColorTextPrimary;
+            txtSearch.Cursor = Cursors.IBeam;
             txtSearch.Font = new Font("Segoe UI", 9.5f);
             txtSearch.TabIndex = 0;
             txtSearch.TabStop = true;
-            
-            int inputLeft = 2 + 16 + 5 + 4; // 27px
-            int inputTop = 6;               // Centered with icon
             txtSearch.Location = new Point(inputLeft, inputTop);
-            txtSearch.Size = new Size(Math.Max(50, 560 - inputLeft - 6), 18);
+            txtSearch.Size = new Size(Math.Max(50, panelSearch.ClientSize.Width - inputLeft - cmbWidth - 14), 18);
             txtSearch.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
             panelSearch.Resize += delegate
             {
-                txtSearch.Width = Math.Max(50, panelSearch.ClientSize.Width - inputLeft - 6);
+                txtSearch.Width = Math.Max(50, panelSearch.ClientSize.Width - inputLeft - cmbWidth - 14);
+                cmbSearchColumn.Left = Math.Max(50, panelSearch.ClientSize.Width - cmbWidth - 4);
             };
 
             // Highlight outer panel when clicking / focusing the input box
@@ -905,6 +1052,41 @@ namespace PasswordGui
                 panelSearchIcon.Invalidate();
             };
             txtSearch.TextChanged += new EventHandler(TxtSearch_TextChanged);
+
+            txtSearch.KeyDown += delegate(object sender, KeyEventArgs e)
+            {
+                if (e.KeyCode == Keys.Enter)
+                {
+                    if (lvCredentials.SelectedItems.Count > 0)
+                    {
+                        txtService.Focus();
+                        txtService.SelectAll();
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                    }
+                }
+                else if (e.KeyCode == Keys.C && e.Control)
+                {
+                    if (txtSearch.SelectionLength == 0 && lvCredentials.SelectedItems.Count > 0)
+                    {
+                        btnCopyPassword.PerformClick();
+                        e.Handled = true;
+                        e.SuppressKeyPress = true;
+                    }
+                }
+                else if (e.KeyCode == Keys.Down)
+                {
+                    if (lvCredentials.Items.Count > 0)
+                    {
+                        lvCredentials.Focus();
+                        if (lvCredentials.SelectedItems.Count == 0)
+                        {
+                            lvCredentials.Items[0].Selected = true;
+                        }
+                        e.Handled = true;
+                    }
+                }
+            };
 
             // Clicking outer panel or icon focuses the input box
             panelSearch.MouseDown += delegate { txtSearch.Focus(); };
@@ -966,6 +1148,21 @@ namespace PasswordGui
             btnRefresh.Click += new EventHandler(BtnRefresh_Click);
             panelLeftBottom.Controls.Add(btnRefresh);
 
+            btnSettings = new ModernButton();
+            btnSettings.Text = "Settings";
+            btnSettings.Location = new Point(374, 8);
+            btnSettings.Size = new Size(105, 34);
+            btnSettings.CornerRadius = 5.0f;
+            btnSettings.IconType = ButtonIcon.Settings;
+            btnSettings.NormalBg = ColorSecondary;
+            btnSettings.HoverBg = ColorSecondaryHover;
+            btnSettings.BorderColor = ColorSecondaryBorder;
+            btnSettings.NormalFg = ColorTextMuted;
+            btnSettings.TabIndex = 5;
+            btnSettings.TabStop = true;
+            btnSettings.Click += delegate { OpenSettings(); };
+            panelLeftBottom.Controls.Add(btnSettings);
+
             panelLeft.Controls.Add(panelLeftBottom);
 
             // ListView with Obsidian Card Styling
@@ -974,6 +1171,7 @@ namespace PasswordGui
             lvCredentials.View = View.Details;
             lvCredentials.FullRowSelect = true;
             lvCredentials.MultiSelect = false;
+            lvCredentials.HideSelection = false;
             lvCredentials.BackColor = ColorBgCard;
             lvCredentials.ForeColor = ColorTextPrimary;
             lvCredentials.BorderStyle = BorderStyle.FixedSingle;
@@ -982,10 +1180,11 @@ namespace PasswordGui
             lvCredentials.TabIndex = 1;
             lvCredentials.TabStop = true;
 
-            lvCredentials.Columns.Add("Service", 140);
-            lvCredentials.Columns.Add("Username / Email", 175);
-            lvCredentials.Columns.Add("Password", 100);
-            lvCredentials.Columns.Add("Last Updated", 140);
+            lvCredentials.Columns.Add("Sl No", 60);
+            lvCredentials.Columns.Add("Service", 135);
+            lvCredentials.Columns.Add("Username / Email", 165);
+            lvCredentials.Columns.Add("Password", 95);
+            lvCredentials.Columns.Add("Last Updated", 130);
 
             // Custom Dark Theme Header Painting (Matches Obsidian & Indigo container palette)
             lvCredentials.OwnerDraw = true;
@@ -1024,15 +1223,42 @@ namespace PasswordGui
 
             lvCredentials.DrawItem += delegate(object sender, DrawListViewItemEventArgs e)
             {
-                e.DrawDefault = true;
+                // In Details mode, DrawSubItem handles all cell rendering
             };
 
             lvCredentials.DrawSubItem += delegate(object sender, DrawListViewSubItemEventArgs e)
             {
-                e.DrawDefault = true;
+                bool isSelected = e.Item.Selected;
+                Color bgColor = isSelected ? Color.FromArgb(38, 48, 78) : ColorBgCard;
+                Color textColor = isSelected ? Color.White : ColorTextPrimary;
+
+                using (SolidBrush bgBrush = new SolidBrush(bgColor))
+                {
+                    e.Graphics.FillRectangle(bgBrush, e.Bounds);
+                }
+
+                // If selected and first column, draw a vibrant left accent pill indicator
+                if (isSelected && e.ColumnIndex == 0)
+                {
+                    using (SolidBrush accentBrush = new SolidBrush(ColorPrimary))
+                    {
+                        e.Graphics.FillRectangle(accentBrush, e.Bounds.Left, e.Bounds.Top + 2, 3, e.Bounds.Height - 4);
+                    }
+                }
+
+                // Subtle bottom border separator between rows
+                using (Pen linePen = new Pen(Color.FromArgb(24, 30, 46), 1f))
+                {
+                    e.Graphics.DrawLine(linePen, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+                }
+
+                Rectangle textBounds = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, Math.Max(0, e.Bounds.Width - 12), e.Bounds.Height);
+                TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
+                TextRenderer.DrawText(e.Graphics, e.SubItem.Text, e.Item.Font, textBounds, textColor, flags);
             };
 
             lvCredentials.SelectedIndexChanged += new EventHandler(LvCredentials_SelectedIndexChanged);
+            lvCredentials.DoubleClick += new EventHandler(BtnCopyPassword_Click);
             lvCredentials.Resize += delegate { AdjustListViewColumns(); };
             lvCredentials.ColumnWidthChanged += delegate(object s, ColumnWidthChangedEventArgs e)
             {
@@ -1060,7 +1286,13 @@ namespace PasswordGui
             panelLeft.Controls.Add(lvCredentials);
             lvCredentials.BringToFront();
 
-            this.Shown += delegate { AdjustListViewColumns(); };
+            this.Shown += delegate
+            {
+                AdjustListViewColumns();
+                this.ActiveControl = txtSearch;
+                txtSearch.Focus();
+                txtSearch.SelectAll();
+            };
 
             // ------------------------------------------
             // KEYBOARD SHORTCUTS & TOOLTIPS
@@ -1069,7 +1301,11 @@ namespace PasswordGui
             toolTip.BackColor = ColorBgCard;
             toolTip.ForeColor = ColorTextPrimary;
             toolTip.SetToolTip(txtSearch, "Search credentials (Ctrl+F, Down to navigate)");
-            toolTip.SetToolTip(lvCredentials, "Navigate with Up/Down, Enter to edit, Delete to remove, Ctrl+C to copy password");
+            toolTip.SetToolTip(cmbSearchColumn, "Select column to search against (Default: Sl No)");
+            toolTip.SetToolTip(lvCredentials, "Navigate with Up/Down, Enter to edit, Double-click/Ctrl+C to copy password, Delete to remove");
+            toolTip.SetToolTip(txtSerialNo, "Serial number order in directory (Edit to remap order)");
+            toolTip.SetToolTip(btnMoveUp, "Move Up (Alt+Up)");
+            toolTip.SetToolTip(btnMoveDown, "Move Down (Alt+Down)");
             toolTip.SetToolTip(btnCopyPassword, "Copy Password (Ctrl+C)");
             toolTip.SetToolTip(btnDelete, "Delete Credential (Delete)");
             toolTip.SetToolTip(btnRefresh, "Refresh List (F5)");
@@ -1077,18 +1313,30 @@ namespace PasswordGui
             toolTip.SetToolTip(btnGeneratePassword, "Generate Random Password (Ctrl+G)");
             toolTip.SetToolTip(btnSave, "Save / Update Credential (Ctrl+S / Enter)");
             toolTip.SetToolTip(btnClear, "New / Clear Form (Ctrl+N / Escape)");
+            toolTip.SetToolTip(btnSettings, "Security & Master Password Settings");
 
             // =========================================================================
             // FORM LEVEL CONTROLS ASSEMBLY (ONLY TITLEBAR IS DOCKED TO TOP!)
             // =========================================================================
+            this.Padding = new Padding(1);
             this.Controls.Add(panelMain);      // Fill
             this.Controls.Add(panelStatusBar); // Bottom
             this.Controls.Add(panelTitleBar);  // Top (ONLY control with Top dock)
+
+            // Enable edge border resizing across child panels
+            EnableEdgeResizing(panelTitleBar);
+            EnableEdgeResizing(panelStatusBar);
+            EnableEdgeResizing(panelMain);
+
+            InitializeTrayIcon();
+            InitializeKeyboardShortcuts();
+
+            this.ActiveControl = txtSearch;
         }
 
         private void AdjustListViewColumns()
         {
-            if (isAdjustingColumns || lvCredentials == null || lvCredentials.Columns.Count < 4) return;
+            if (isAdjustingColumns || lvCredentials == null || lvCredentials.Columns.Count < 5) return;
             try
             {
                 isAdjustingColumns = true;
@@ -1098,7 +1346,7 @@ namespace PasswordGui
                     fixedWidth += lvCredentials.Columns[i].Width;
                 }
                 int remaining = lvCredentials.ClientSize.Width - fixedWidth;
-                if (remaining > 100)
+                if (remaining > 80)
                 {
                     lvCredentials.Columns[lvCredentials.Columns.Count - 1].Width = remaining;
                 }
@@ -1169,192 +1417,459 @@ namespace PasswordGui
             }
         }
 
-        // Border Resizing via WM_NCHITTEST
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            using (Pen borderPen = new Pen(ColorBorder, 1f))
+            {
+                e.Graphics.DrawRectangle(borderPen, 0, 0, this.ClientSize.Width - 1, this.ClientSize.Height - 1);
+            }
+        }
+
+        private void EnableEdgeResizing(Control ctrl)
+        {
+            if (ctrl == null) return;
+            new EdgeResizeFilter(ctrl, this);
+            foreach (Control child in ctrl.Controls)
+            {
+                if (child == btnMin || child == btnMax || child == btnClose) continue;
+                EnableEdgeResizing(child);
+            }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            ApplyHotkeyRegistration();
+        }
+
+        private void ApplyHotkeyRegistration()
+        {
+            if (hotkeyManager == null) return;
+            hotkeyManager.Unregister();
+            if (appSettings != null && appSettings.HotkeyEnabled && this.IsHandleCreated)
+            {
+                string err;
+                hotkeyManager.Register(this.Handle, appSettings.HotkeyModifiers, appSettings.HotkeyKey, out err);
+            }
+        }
+
+        // Border Resizing via WM_NCHITTEST & IPC Message Handling
         protected override void WndProc(ref Message m)
         {
-            base.WndProc(ref m);
+            if (hotkeyManager != null && hotkeyManager.ProcessMessage(ref m))
+            {
+                RestoreFromTray();
+                m.Result = (IntPtr)1;
+                return;
+            }
 
-            if (m.Msg == WM_NCHITTEST && (int)m.Result == HTCLIENT)
+            if (m.Msg == SingleInstanceController.RestoreWindowMessageId)
+            {
+                bool forceMaximize = (m.WParam == (IntPtr)2);
+                RestoreFromTray(forceMaximize);
+                m.Result = (IntPtr)1;
+                return;
+            }
+
+            if (m.Msg == WM_NCHITTEST && this.WindowState == FormWindowState.Normal)
             {
                 Point cursor = this.PointToClient(Cursor.Position);
                 int border = 8;
 
-                bool left = cursor.X <= border;
-                bool right = cursor.X >= this.ClientSize.Width - border;
-                bool top = cursor.Y <= border;
-                bool bottom = cursor.Y >= this.ClientSize.Height - border;
+                // Don't intercept top-right close/minimize buttons
+                bool inTitleButtons = (cursor.X >= this.ClientSize.Width - 140 && cursor.Y <= 42);
+                if (!inTitleButtons)
+                {
+                    bool left = cursor.X <= border;
+                    bool right = cursor.X >= this.ClientSize.Width - border;
+                    bool top = cursor.Y <= border;
+                    bool bottom = cursor.Y >= this.ClientSize.Height - border;
 
-                if (top && left) m.Result = (IntPtr)HTTOPLEFT;
-                else if (top && right) m.Result = (IntPtr)HTTOPRIGHT;
-                else if (bottom && left) m.Result = (IntPtr)HTBOTTOMLEFT;
-                else if (bottom && right) m.Result = (IntPtr)HTBOTTOMRIGHT;
-                else if (left) m.Result = (IntPtr)HTLEFT;
-                else if (right) m.Result = (IntPtr)HTRIGHT;
-                else if (top) m.Result = (IntPtr)HTTOP;
-                else if (bottom) m.Result = (IntPtr)HTBOTTOM;
+                    if (top && left) { m.Result = (IntPtr)HTTOPLEFT; return; }
+                    if (top && right) { m.Result = (IntPtr)HTTOPRIGHT; return; }
+                    if (bottom && left) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
+                    if (bottom && right) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
+                    if (left) { m.Result = (IntPtr)HTLEFT; return; }
+                    if (right) { m.Result = (IntPtr)HTRIGHT; return; }
+                    if (top) { m.Result = (IntPtr)HTTOP; return; }
+                    if (bottom) { m.Result = (IntPtr)HTBOTTOM; return; }
+                }
             }
+
+            base.WndProc(ref m);
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (this.WindowState == FormWindowState.Minimized)
+            {
+                MinimizeToTray();
+            }
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing && appSettings != null && appSettings.CloseToTray)
+            {
+                e.Cancel = true;
+                MinimizeToTray();
+                return;
+            }
+
+            if (hotkeyManager != null)
+            {
+                hotkeyManager.Dispose();
+                hotkeyManager = null;
+            }
+
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = false;
+                notifyIcon.Dispose();
+                notifyIcon = null;
+            }
+            base.OnFormClosing(e);
+        }
+
+        // ==========================================
+        // SYSTEM TRAY & SINGLE-INSTANCE RESTORATION
+        // ==========================================
+        private void InitializeTrayIcon()
+        {
+            try
+            {
+                trayMenu = new ContextMenuStrip();
+                trayMenu.BackColor = ColorBgCard;
+                trayMenu.ForeColor = ColorTextPrimary;
+                trayMenu.RenderMode = ToolStripRenderMode.System;
+
+                ToolStripMenuItem itemOpen = new ToolStripMenuItem("Open KeyCraft", null, delegate { RestoreFromTray(); });
+                itemOpen.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
+                itemOpen.ForeColor = ColorTextPrimary;
+
+                ToolStripMenuItem itemSearch = new ToolStripMenuItem("Search Credentials (Ctrl+F)", null, delegate
+                {
+                    RestoreFromTray();
+                    txtSearch.Focus();
+                    txtSearch.SelectAll();
+                });
+                itemSearch.ForeColor = ColorTextPrimary;
+
+                ToolStripMenuItem itemLock = new ToolStripMenuItem("Lock Vault", null, delegate
+                {
+                    LockVault();
+                });
+                itemLock.ForeColor = ColorTextPrimary;
+
+                ToolStripMenuItem itemSettings = new ToolStripMenuItem("Settings...", null, delegate
+                {
+                    RestoreFromTray();
+                    OpenSettings();
+                });
+                itemSettings.ForeColor = ColorTextPrimary;
+
+                ToolStripSeparator sep = new ToolStripSeparator();
+
+                ToolStripMenuItem itemExit = new ToolStripMenuItem("Exit", null, delegate
+                {
+                    QuitApplication();
+                });
+                itemExit.ForeColor = ColorDangerText;
+
+                trayMenu.Items.Add(itemOpen);
+                trayMenu.Items.Add(itemSearch);
+                trayMenu.Items.Add(itemLock);
+                trayMenu.Items.Add(itemSettings);
+                trayMenu.Items.Add(sep);
+                trayMenu.Items.Add(itemExit);
+
+                notifyIcon = new NotifyIcon();
+                notifyIcon.Text = "KeyCraft Password Manager";
+                notifyIcon.ContextMenuStrip = trayMenu;
+
+                // Sleek shield tray icon matching theme
+                using (Bitmap bmp = new Bitmap(16, 16))
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    g.Clear(Color.Transparent);
+                    using (SolidBrush shieldBrush = new SolidBrush(ColorPrimary))
+                    {
+                        Point[] pts = new Point[] {
+                            new Point(8, 1),
+                            new Point(14, 3),
+                            new Point(14, 9),
+                            new Point(8, 15),
+                            new Point(2, 9),
+                            new Point(2, 3)
+                        };
+                        g.FillPolygon(shieldBrush, pts);
+                    }
+                    using (Pen p = new Pen(ColorTextPrimary, 1.2f))
+                    {
+                        g.DrawLine(p, 8, 4, 8, 11);
+                        g.DrawLine(p, 5, 7, 11, 7);
+                    }
+                    IntPtr hIcon = bmp.GetHicon();
+                    notifyIcon.Icon = Icon.FromHandle(hIcon);
+                }
+
+                notifyIcon.DoubleClick += delegate { RestoreFromTray(); };
+                notifyIcon.Click += delegate(object s, EventArgs ea)
+                {
+                    MouseEventArgs me = ea as MouseEventArgs;
+                    if (me == null || me.Button == MouseButtons.Left)
+                    {
+                        RestoreFromTray();
+                    }
+                };
+            }
+            catch { }
+        }
+
+        private FormWindowState previousWindowState = FormWindowState.Normal;
+
+        public void MinimizeToTray()
+        {
+            if (this.WindowState != FormWindowState.Minimized)
+            {
+                previousWindowState = this.WindowState;
+            }
+            this.Hide();
+            this.ShowInTaskbar = false;
+
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = true;
+                if (!hasShownTrayTip)
+                {
+                    notifyIcon.ShowBalloonTip(
+                        2500,
+                        "KeyCraft Running in Background",
+                        "KeyCraft is minimized to the system tray. Press the shortcut or double-click to reopen.",
+                        ToolTipIcon.Info
+                    );
+                    hasShownTrayTip = true;
+                }
+            }
+        }
+
+        public void RestoreFromTray(bool forceMaximize = false)
+        {
+            if (this.InvokeRequired)
+            {
+                this.BeginInvoke(new Action<bool>(RestoreFromTray), forceMaximize);
+                return;
+            }
+
+            if (shortcutManager != null)
+            {
+                shortcutManager.ResetDebouncer();
+            }
+
+            this.Show();
+            this.ShowInTaskbar = true;
+
+            if (forceMaximize || previousWindowState == FormWindowState.Maximized)
+            {
+                this.MaximizedBounds = Screen.FromHandle(this.Handle).WorkingArea;
+                this.WindowState = FormWindowState.Maximized;
+            }
+            else
+            {
+                this.WindowState = FormWindowState.Normal;
+            }
+
+            if (btnMax != null)
+            {
+                btnMax.IsMaximized = (this.WindowState == FormWindowState.Maximized);
+                btnMax.Invalidate();
+            }
+
+            this.BringToFront();
+            this.Activate();
+            NativeMethods.SetForegroundWindow(this.Handle);
+
+            txtSearch.Focus();
+            txtSearch.SelectAll();
+        }
+
+        private void LockVault()
+        {
+            this.Close();
+        }
+
+        private void QuitApplication()
+        {
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = false;
+                notifyIcon.Dispose();
+                notifyIcon = null;
+            }
+            Application.Exit();
         }
 
         // ==========================================
         // KEYBOARD NAVIGATION & ACCELERATORS
         // ==========================================
-        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        private void InitializeKeyboardShortcuts()
         {
-            // 1. Global Keyboard Accelerators
-            if (keyData == (Keys.Control | Keys.F))
+            shortcutManager = new KeyboardShortcutManager();
+
+            // 1. Double Escape -> Minimize to System Tray
+            shortcutManager.DoubleEscapeTriggered = delegate
+            {
+                MinimizeToTray();
+            };
+
+            // 2. Single Escape -> Form field / search cleanup
+            shortcutManager.SingleEscapeTriggered = delegate
+            {
+                HandleSingleEscape();
+            };
+
+            // 3. Alt+Up / Alt+Down Reordering
+            shortcutManager.MoveUpTriggered = delegate { btnMoveUp.PerformClick(); };
+            shortcutManager.MoveDownTriggered = delegate { btnMoveDown.PerformClick(); };
+
+            // 4. Ctrl+C (Copy Password)
+            shortcutManager.CopyPasswordTriggered = delegate { btnCopyPassword.PerformClick(); };
+
+            // 5. Ctrl+F Focus Search
+            shortcutManager.FocusSearchTriggered = delegate
             {
                 txtSearch.Focus();
                 txtSearch.SelectAll();
-                return true;
-            }
-            if (keyData == (Keys.Control | Keys.N))
+            };
+
+            // 6. Ctrl+S Save
+            shortcutManager.SaveCredentialTriggered = delegate { btnSave.PerformClick(); };
+
+            // 7. Ctrl+N Clear/New
+            shortcutManager.ClearFormTriggered = delegate
             {
                 ClearEditor();
                 txtService.Focus();
-                return true;
-            }
-            if (keyData == (Keys.Control | Keys.S))
-            {
-                btnSave.PerformClick();
-                return true;
-            }
-            if (keyData == (Keys.Control | Keys.G))
-            {
-                btnGeneratePassword.PerformClick();
-                return true;
-            }
-            if (keyData == (Keys.Control | Keys.P) || keyData == (Keys.Control | Keys.Shift | Keys.P))
-            {
-                btnTogglePassword.PerformClick();
-                return true;
-            }
-            if (keyData == Keys.F5)
-            {
-                btnRefresh.PerformClick();
-                return true;
-            }
+            };
 
-            // 2. Escape Key Navigation
-            if (keyData == Keys.Escape)
+            // 8. Ctrl+P / Space Toggle Password
+            shortcutManager.TogglePasswordTriggered = delegate { btnTogglePassword.PerformClick(); };
+
+            // 9. Ctrl+G Generate Password
+            shortcutManager.GeneratePasswordTriggered = delegate { btnGeneratePassword.PerformClick(); };
+
+            // 10. Ctrl+, Settings
+            shortcutManager.OpenSettingsTriggered = delegate { OpenSettings(); };
+
+            // 11. F5 Refresh
+            shortcutManager.RefreshTriggered = delegate { btnRefresh.PerformClick(); };
+
+            // 12. Delete
+            shortcutManager.DeleteTriggered = delegate { btnDelete.PerformClick(); };
+
+            // 13. Enter Key: Jump to Edit Selected Item
+            shortcutManager.EnterEditTriggered = delegate
             {
-                if (txtSearch.Focused)
+                if (lvCredentials.SelectedItems.Count == 0 && lvCredentials.Items.Count > 0)
                 {
-                    if (!string.IsNullOrEmpty(txtSearch.Text))
-                    {
-                        txtSearch.Text = string.Empty;
-                        return true;
-                    }
-                    else if (lvCredentials.Items.Count > 0)
-                    {
-                        lvCredentials.Focus();
-                        return true;
-                    }
+                    lvCredentials.Items[0].Selected = true;
                 }
-                else if (lvCredentials.Focused)
+                txtService.Focus();
+                txtService.SelectAll();
+            };
+
+            // 14. Down Arrow: Search Box -> List Navigation
+            shortcutManager.DownToNavigateListTriggered = delegate
+            {
+                lvCredentials.Focus();
+                if (lvCredentials.SelectedItems.Count == 0 && lvCredentials.Items.Count > 0)
                 {
-                    if (lvCredentials.SelectedItems.Count > 0)
-                    {
-                        lvCredentials.SelectedItems.Clear();
-                        return true;
-                    }
+                    lvCredentials.Items[0].Selected = true;
                 }
-                else if (txtService.Focused || txtUsername.Focused || txtPassword.Focused)
+            };
+
+            // 15. Up Arrow: Top of List -> Search Box Focus
+            shortcutManager.UpToNavigateSearchTriggered = delegate
+            {
+                txtSearch.Focus();
+                txtSearch.SelectAll();
+            };
+        }
+
+        private void HandleSingleEscape()
+        {
+            if (txtSearch.Focused)
+            {
+                if (!string.IsNullOrEmpty(txtSearch.Text))
                 {
-                    ClearEditor();
+                    txtSearch.Text = string.Empty;
+                }
+                else if (lvCredentials.Items.Count > 0)
+                {
                     lvCredentials.Focus();
-                    return true;
                 }
             }
+            else if (lvCredentials.Focused)
+            {
+                if (lvCredentials.SelectedItems.Count > 0)
+                {
+                    lvCredentials.SelectedItems.Clear();
+                }
+            }
+            else if (txtService.Focused || txtUsername.Focused || txtPassword.Focused || txtSerialNo.Focused)
+            {
+                ClearEditor();
+                lvCredentials.Focus();
+            }
+        }
 
-            // 3. Enter Key Navigation
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            bool handled = false;
+            if (shortcutManager != null)
+            {
+                bool isTopSelected = (lvCredentials.SelectedIndices.Count > 0 && lvCredentials.SelectedIndices[0] == 0);
+                handled = shortcutManager.HandleCmdKey(
+                    keyData,
+                    this.ActiveControl,
+                    txtSearch.Focused,
+                    !string.IsNullOrEmpty(txtSearch.Text),
+                    txtSearch.SelectionLength,
+                    lvCredentials.Items.Count > 0,
+                    lvCredentials.SelectedItems.Count > 0,
+                    isTopSelected
+                );
+            }
+
+            if (handled) return true;
+
+            // Sequential Enter key traversal between editor inputs
             if (keyData == Keys.Enter)
             {
-                if (txtSearch.Focused)
+                if (txtSerialNo.Focused)
                 {
-                    if (lvCredentials.Items.Count > 0)
-                    {
-                        lvCredentials.Focus();
-                        if (lvCredentials.SelectedItems.Count == 0)
-                        {
-                            lvCredentials.Items[0].Selected = true;
-                        }
-                        return true;
-                    }
+                    txtService.Focus();
+                    txtService.SelectAll();
+                    return true;
                 }
-                else if (lvCredentials.Focused)
-                {
-                    if (lvCredentials.SelectedItems.Count > 0)
-                    {
-                        txtService.Focus();
-                        txtService.SelectAll();
-                        return true;
-                    }
-                }
-                else if (txtService.Focused)
+                if (txtService.Focused)
                 {
                     txtUsername.Focus();
                     txtUsername.SelectAll();
                     return true;
                 }
-                else if (txtUsername.Focused)
+                if (txtUsername.Focused)
                 {
                     txtPassword.Focus();
                     txtPassword.SelectAll();
                     return true;
                 }
-                else if (txtPassword.Focused)
+                if (txtPassword.Focused)
                 {
                     btnSave.PerformClick();
-                    return true;
-                }
-            }
-
-            // 4. Down Arrow: Search Box -> List
-            if (keyData == Keys.Down)
-            {
-                if (txtSearch.Focused && lvCredentials.Items.Count > 0)
-                {
-                    lvCredentials.Focus();
-                    if (lvCredentials.SelectedItems.Count == 0)
-                    {
-                        lvCredentials.Items[0].Selected = true;
-                    }
-                    return true;
-                }
-                else if (lvCredentials.Focused && lvCredentials.SelectedItems.Count == 0 && lvCredentials.Items.Count > 0)
-                {
-                    lvCredentials.Items[0].Selected = true;
-                    return true;
-                }
-            }
-
-            // 5. Up Arrow: List Item 0 -> Search Box
-            if (keyData == Keys.Up && lvCredentials.Focused)
-            {
-                if (lvCredentials.SelectedIndices.Count > 0 && lvCredentials.SelectedIndices[0] == 0)
-                {
-                    txtSearch.Focus();
-                    txtSearch.SelectAll();
-                    return true;
-                }
-            }
-
-            // 6. Delete Key in List View
-            if (keyData == Keys.Delete && lvCredentials.Focused)
-            {
-                if (lvCredentials.SelectedItems.Count > 0)
-                {
-                    btnDelete.PerformClick();
-                    return true;
-                }
-            }
-
-            // 7. Ctrl+C in List View (Copy Password)
-            if (keyData == (Keys.Control | Keys.C) && lvCredentials.Focused)
-            {
-                if (lvCredentials.SelectedItems.Count > 0)
-                {
-                    btnCopyPassword.PerformClick();
                     return true;
                 }
             }
@@ -1381,11 +1896,16 @@ namespace PasswordGui
         private void ApplyFilter()
         {
             lvCredentials.Items.Clear();
-            List<Credential> filtered = service.Filter(cachedList, txtSearch.Text);
+            string searchColumn = (cmbSearchColumn != null && cmbSearchColumn.SelectedItem != null)
+                ? cmbSearchColumn.SelectedItem.ToString()
+                : "Sl No";
+
+            List<Credential> filtered = service.Filter(cachedList, txtSearch.Text, searchColumn);
 
             foreach (Credential c in filtered)
             {
-                ListViewItem item = new ListViewItem(c.Service);
+                ListViewItem item = new ListViewItem(c.SerialNo.ToString());
+                item.SubItems.Add(c.Service);
                 item.SubItems.Add(string.IsNullOrEmpty(c.Username) ? "-" : c.Username);
                 item.SubItems.Add("••••••••");
                 item.SubItems.Add(c.LastUpdated.ToString("yyyy-MM-dd HH:mm"));
@@ -1393,7 +1913,14 @@ namespace PasswordGui
                 lvCredentials.Items.Add(item);
             }
 
-            lblStatusCount.Text = string.Format("Total: {0} ({1} shown)", cachedList.Count, filtered.Count);
+            // Always auto-select the first item in the list by default
+            if (lvCredentials.Items.Count > 0)
+            {
+                lvCredentials.Items[0].Selected = true;
+                lvCredentials.Items[0].Focused = true;
+            }
+
+            lblStatusCount.Text = string.Format("Total: {0} ({1} shown)", cachedList != null ? cachedList.Count : 0, filtered.Count);
         }
 
         private void TxtSearch_TextChanged(object sender, EventArgs e)
@@ -1410,6 +1937,7 @@ namespace PasswordGui
                 {
                     lblEditorHeader.Text = "Edit Credential";
                     lblEditorHeader.ForeColor = ColorWarningBg;
+                    txtSerialNo.Text = selectedCredential.SerialNo.ToString();
                     txtService.Text = selectedCredential.Service;
                     txtUsername.Text = selectedCredential.Username;
                     txtPassword.Text = selectedCredential.Password;
@@ -1448,6 +1976,7 @@ namespace PasswordGui
             selectedCredential = null;
             lblEditorHeader.Text = "New Credential";
             lblEditorHeader.ForeColor = ColorTextPrimary;
+            txtSerialNo.Text = (cachedList != null ? (cachedList.Count + 1) : 1).ToString();
             txtService.Text = string.Empty;
             txtUsername.Text = string.Empty;
             txtPassword.Text = string.Empty;
@@ -1464,11 +1993,58 @@ namespace PasswordGui
             btnTogglePassword.Invalidate();
         }
 
+        private void BtnMoveUp_Click(object sender, EventArgs e)
+        {
+            if (selectedCredential != null && selectedCredential.SerialNo > 1)
+            {
+                string id = selectedCredential.Id;
+                int targetSerial = selectedCredential.SerialNo - 1;
+                service.ReorderCredential(id, targetSerial);
+                LoadCredentials();
+                SelectCredentialById(id);
+                ShowToast(string.Format("▲ Moved to Sl No {0}", targetSerial));
+            }
+        }
+
+        private void BtnMoveDown_Click(object sender, EventArgs e)
+        {
+            if (selectedCredential != null && cachedList != null && selectedCredential.SerialNo < cachedList.Count)
+            {
+                string id = selectedCredential.Id;
+                int targetSerial = selectedCredential.SerialNo + 1;
+                service.ReorderCredential(id, targetSerial);
+                LoadCredentials();
+                SelectCredentialById(id);
+                ShowToast(string.Format("▼ Moved to Sl No {0}", targetSerial));
+            }
+        }
+
+        private void SelectCredentialById(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            foreach (ListViewItem item in lvCredentials.Items)
+            {
+                Credential c = item.Tag as Credential;
+                if (c != null && c.Id == id)
+                {
+                    item.Selected = true;
+                    item.EnsureVisible();
+                    break;
+                }
+            }
+        }
+
         private void BtnSave_Click(object sender, EventArgs e)
         {
             string serviceName = txtService.Text;
             string username = txtUsername.Text;
             string password = txtPassword.Text;
+
+            int targetSerial = 0;
+            if (!string.IsNullOrEmpty(txtSerialNo.Text))
+            {
+                int.TryParse(txtSerialNo.Text.Trim(), out targetSerial);
+            }
 
             string error;
             if (!service.Validate(serviceName, username, password, out error))
@@ -1481,12 +2057,12 @@ namespace PasswordGui
             {
                 if (selectedCredential == null)
                 {
-                    service.AddCredential(serviceName, username, password);
+                    service.AddCredential(serviceName, username, password, targetSerial);
                     ShowToast("✓ New credential saved!");
                 }
                 else
                 {
-                    service.UpdateCredential(selectedCredential.Id, serviceName, username, password);
+                    service.UpdateCredential(selectedCredential.Id, serviceName, username, password, targetSerial);
                     ShowToast("✓ Credential updated!");
                 }
 
@@ -1608,6 +2184,41 @@ namespace PasswordGui
         {
             lblToast.Visible = false;
             timerToast.Stop();
+        }
+
+        private void OpenSettings()
+        {
+            using (SettingsForm settingsForm = new SettingsForm(service, appSettings))
+            {
+                settingsForm.SettingsSaved += delegate
+                {
+                    ApplyHotkeyRegistration();
+                };
+                settingsForm.VaultLockRequested += delegate
+                {
+                    LockVaultAndPrompt();
+                };
+                settingsForm.ShowDialog(this);
+            }
+        }
+
+        private void LockVaultAndPrompt()
+        {
+            service.LockVault();
+            this.Hide();
+            string repoPath = service.GetVaultFilePath();
+            using (MasterPasswordForm unlockForm = new MasterPasswordForm(MasterPasswordMode.Unlock, repoPath))
+            {
+                if (unlockForm.ShowDialog() == DialogResult.OK)
+                {
+                    this.Show();
+                    LoadCredentials();
+                }
+                else
+                {
+                    Application.Exit();
+                }
+            }
         }
     }
 }

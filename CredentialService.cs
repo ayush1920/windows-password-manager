@@ -46,7 +46,7 @@ namespace PasswordGui
             return true;
         }
 
-        public void AddCredential(string service, string username, string password)
+        public void AddCredential(string service, string username, string password, int serialNo = 0)
         {
             string err;
             if (!Validate(service, username, password, out err))
@@ -54,11 +54,11 @@ namespace PasswordGui
                 throw new ArgumentException(err);
             }
 
-            Credential cred = new Credential(service.Trim(), username != null ? username.Trim() : "", password);
+            Credential cred = new Credential(service.Trim(), username != null ? username.Trim() : "", password, serialNo);
             repository.Add(cred);
         }
 
-        public void UpdateCredential(string id, string service, string username, string password)
+        public void UpdateCredential(string id, string service, string username, string password, int targetSerialNo = 0)
         {
             string err;
             if (!Validate(service, username, password, out err))
@@ -73,11 +73,16 @@ namespace PasswordGui
             cred.Password = password;
             cred.LastUpdated = DateTime.Now;
 
-            bool updated = repository.Update(cred);
+            bool updated = repository.Update(cred, targetSerialNo);
             if (!updated)
             {
                 throw new InvalidOperationException("Credential could not be found to update.");
             }
+        }
+
+        public bool ReorderCredential(string id, int targetSerialNo)
+        {
+            return repository.Reorder(id, targetSerialNo);
         }
 
         public bool DeleteCredential(string id)
@@ -86,26 +91,66 @@ namespace PasswordGui
         }
 
         /// <summary>
-        /// Filters a list of credentials by a search keyword (matches Service or Username).
+        /// Filters a list of credentials by a specific column selection ("Sl No", "Service", "Username", "All Columns").
         /// </summary>
-        public List<Credential> Filter(List<Credential> source, string query)
+        public List<Credential> Filter(List<Credential> source, string query, string searchColumn = "Sl No")
         {
             if (source == null) return new List<Credential>();
             if (string.IsNullOrWhiteSpace(query)) return new List<Credential>(source);
 
             string q = query.Trim().ToLowerInvariant();
             List<Credential> results = new List<Credential>();
+            List<Credential> secondaryResults = new List<Credential>();
+
+            string col = string.IsNullOrEmpty(searchColumn) ? "sl no" : searchColumn.Trim().ToLowerInvariant();
 
             foreach (Credential c in source)
             {
+                string serialStr = c.SerialNo.ToString();
+                bool matchSerialExact = serialStr.Equals(q, StringComparison.OrdinalIgnoreCase);
+                bool matchSerialPrefix = serialStr.StartsWith(q, StringComparison.OrdinalIgnoreCase);
                 bool matchService = !string.IsNullOrEmpty(c.Service) && c.Service.ToLowerInvariant().Contains(q);
                 bool matchUser = !string.IsNullOrEmpty(c.Username) && c.Username.ToLowerInvariant().Contains(q);
-                if (matchService || matchUser)
+
+                if (col == "sl no" || col == "sl. no." || col == "serialno")
                 {
-                    results.Add(c);
+                    if (matchSerialExact)
+                    {
+                        results.Add(c);
+                    }
+                    else if (matchSerialPrefix)
+                    {
+                        secondaryResults.Add(c);
+                    }
+                }
+                else if (col == "service")
+                {
+                    if (matchService)
+                    {
+                        results.Add(c);
+                    }
+                }
+                else if (col == "username" || col == "username / email")
+                {
+                    if (matchUser)
+                    {
+                        results.Add(c);
+                    }
+                }
+                else // "All Columns"
+                {
+                    if (matchSerialExact)
+                    {
+                        results.Add(c);
+                    }
+                    else if (matchSerialPrefix || matchService || matchUser)
+                    {
+                        secondaryResults.Add(c);
+                    }
                 }
             }
 
+            results.AddRange(secondaryResults);
             return results;
         }
 
@@ -215,6 +260,20 @@ namespace PasswordGui
                     array[j] = temp;
                 }
             }
+        }
+        public bool ChangeMasterPassword(string currentPass, string newPass, out string error)
+        {
+            return repository.ChangeMasterPassword(currentPass, newPass, out error);
+        }
+
+        public void LockVault()
+        {
+            VaultSecurity.LockSession();
+        }
+
+        public string GetVaultFilePath()
+        {
+            return repository.GetFilePath();
         }
     }
 }

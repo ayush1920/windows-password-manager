@@ -22,7 +22,7 @@ if not exist "%PROJECT_ROOT%\data" mkdir "%PROJECT_ROOT%\data"
 taskkill /f /im PasswordManager.exe 2>nul
 
 echo Compiling C# source files into bin\PasswordManager.exe ...
-%CSC% /nologo /target:winexe /out:"%PROJECT_ROOT%\bin\PasswordManager.exe" /reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll "%PROJECT_ROOT%\*.cs"
+%CSC% /nologo /target:winexe /out:"%PROJECT_ROOT%\bin\PasswordManager.exe" /reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Core.dll "%PROJECT_ROOT%\*.cs"
 
 if %ERRORLEVEL% equ 0 (
     echo.

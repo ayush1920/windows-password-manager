@@ -3,7 +3,7 @@
 # ==========================================================
 
 # ----------------------------------------------------------
-# CRITICAL: Credentials & Plain-Text Passwords (NEVER COMMIT)
+# CRITICAL: Credentials, Settings & Backups (NEVER COMMIT)
 # ----------------------------------------------------------
 data/
 credentials.txt
@@ -13,6 +13,10 @@ passwords.txt
 secrets.txt
 secrets.json
 *.key
+*.bak
+*.tmp
+*.conf
+*.user_backup_*
 
 # ----------------------------------------------------------
 # Logs & Diagnostic Dumps

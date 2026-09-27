@@ -23,7 +23,7 @@ Start-Sleep -Milliseconds 300
 $sourceFiles = Get-ChildItem -Path "$projectRoot" -Filter "*.cs" | ForEach-Object { $_.FullName }
 
 Write-Host "Compiling source files to bin\PasswordManager.exe..." -ForegroundColor Cyan
-& $cscPath /nologo /target:winexe /out:$outputPath /reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll $sourceFiles
+& $cscPath /nologo /target:winexe /out:$outputPath /reference:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Core.dll $sourceFiles
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "Build Succeeded! Starting bin\PasswordManager.exe..." -ForegroundColor Green
