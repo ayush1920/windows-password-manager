@@ -55,9 +55,9 @@ namespace PasswordGui
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
-                string repoPath = CredentialRepository.GetDefaultPath();
-                bool isEncrypted = VaultSecurity.IsVaultEncrypted(repoPath);
+                AppSettings appSettings = AppSettings.Load();
 
+                string repoPath = null;
                 string passedPassword = null;
                 bool startInTray = false;
                 if (args != null && args.Length > 0)
@@ -76,8 +76,33 @@ namespace PasswordGui
                         {
                             startInTray = true;
                         }
+                        else if ((args[i].Equals("-f", StringComparison.OrdinalIgnoreCase) ||
+                                  args[i].Equals("--file", StringComparison.OrdinalIgnoreCase) ||
+                                  args[i].Equals("--vault", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                        {
+                            repoPath = args[i + 1];
+                            i++;
+                        }
+                        else if (!args[i].StartsWith("-") && System.IO.File.Exists(args[i]))
+                        {
+                            repoPath = args[i];
+                        }
                     }
                 }
+
+                if (string.IsNullOrEmpty(repoPath))
+                {
+                    if (!string.IsNullOrEmpty(appSettings.LastOpenedVaultPath) && (System.IO.File.Exists(appSettings.LastOpenedVaultPath) || !System.IO.File.Exists(AppSettings.GetDefaultVaultPath())))
+                    {
+                        repoPath = appSettings.LastOpenedVaultPath;
+                    }
+                    else
+                    {
+                        repoPath = AppSettings.GetDefaultVaultPath();
+                    }
+                }
+
+                bool isEncrypted = VaultSecurity.IsVaultEncrypted(repoPath);
 
                 bool unlockedViaCli = false;
                 if (!string.IsNullOrEmpty(passedPassword) && isEncrypted)
@@ -91,29 +116,19 @@ namespace PasswordGui
 
                 if (!unlockedViaCli)
                 {
-                    if (!isEncrypted)
+                    MasterPasswordMode initMode = isEncrypted ? MasterPasswordMode.Unlock : MasterPasswordMode.Create;
+                    using (MasterPasswordForm authForm = new MasterPasswordForm(initMode, repoPath))
                     {
-                        // First run / unencrypted vault: user must create master password
-                        using (MasterPasswordForm createForm = new MasterPasswordForm(MasterPasswordMode.Create, repoPath))
+                        if (authForm.ShowDialog() != DialogResult.OK)
                         {
-                            if (createForm.ShowDialog() != DialogResult.OK)
-                            {
-                                return; // Cancelled
-                            }
+                            return; // Cancelled
                         }
-                    }
-                    else
-                    {
-                        // Encrypted vault: user must unlock with master password
-                        using (MasterPasswordForm unlockForm = new MasterPasswordForm(MasterPasswordMode.Unlock, repoPath))
-                        {
-                            if (unlockForm.ShowDialog() != DialogResult.OK)
-                            {
-                                return; // Cancelled
-                            }
-                        }
+                        repoPath = authForm.SelectedVaultPath;
                     }
                 }
+
+                appSettings.AddRecentVault(repoPath);
+                appSettings.Save();
 
                 // Initialize Database / Repository layer with unlocked vault
                 CredentialRepository repository = new CredentialRepository(repoPath);

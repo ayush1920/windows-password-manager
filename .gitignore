@@ -13,6 +13,8 @@ passwords.txt
 secrets.txt
 secrets.json
 *.key
+*.kcrypt
+*.kcrypt.bak
 *.bak
 *.tmp
 *.conf

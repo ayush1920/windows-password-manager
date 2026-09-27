@@ -249,68 +249,77 @@ windows-password-manager/
 │   ├── capture_form.ps1          # Form screenshot utility
 │   ├── capture_window.py         # Window snapshot utility
 │   ├── fetch_icons.py            # Lucide icon asset fetcher
+│   ├── run_multivault_tests.bat  # Batch runner for dedicated KeePass Multi-Vault test suite
+│   ├── run_multivault_tests.ps1  # PowerShell runner for Multi-Vault test suite (13 comprehensive tests)
 │   ├── run_tests.bat             # Batch launcher for automated test suites
 │   └── run_tests.ps1             # PowerShell automated test runner (Tier 1 & Tier 2)
 ├── tests/
-│   ├── TestRunner_Tier1.cs       # Tier 1: Programmatic engine & cryptographic test suite (12 tests)
-│   └── TestRunner_Tier2.cs       # Tier 2: End-to-end UI & system automation test suite (8 flows)
-├── AppSettings.cs                # Configuration persistence, Windows startup registry, & preferences
+│   ├── TestRunner_MultiVault.cs  # Comprehensive KeePass Multi-Vault Test Suite (13 tests)
+│   ├── TestRunner_Tier1.cs       # Tier 1: Programmatic engine & cryptographic test suite (14 tests)
+│   └── TestRunner_Tier2.cs       # Tier 2: End-to-end UI & system automation test suite (9 flows)
+├── AppSettings.cs                # Configuration persistence, MRU vaults, Windows startup registry
 ├── Credential.cs                 # Domain model (Id, SlNo, Service, Username, Password, LastUpdated)
-├── CredentialRepository.cs       # File I/O, parsing, and vault read/write
+├── CredentialRepository.cs       # Dynamic database switching, file I/O, parsing, and vault read/write
 ├── CredentialService.cs          # Business logic, reordering, searching, CRUD operations
 ├── GlobalHotkeyManager.cs        # Win32 RegisterHotKey, conflict detection, & WM_HOTKEY dispatch
 ├── HotkeyPickerControl.cs        # Microsoft PowerToys-style interactive key capture control
 ├── IconResources.cs              # High-DPI procedural vector iconography cache
 ├── KeyboardShortcutManager.cs    # Debounced double-escape & shortcut router
-├── MainForm.cs                   # Main Obsidian GUI, system tray, & event wiring
-├── MasterPasswordForm.cs         # Master password creation & unlock dialog
+├── MainForm.cs                   # Main Obsidian GUI, KeePass toolbar, system tray, & event wiring
+├── MasterPasswordForm.cs         # KeePass vault setup, unlock dialog & fallback actions
 ├── NativeMethods.cs              # Win32 API declarations (IPC, messages, window control)
 ├── Program.cs                    # Entry point, Mutex single-instance check, & CLI args
 ├── SafeFileStorage.cs            # Atomic writing, disk flush (fs.Flush(true)), & .bak rotation
 ├── SettingsForm.cs               # Dedicated Security & Settings panel with live hotkey selector
 ├── SingleInstanceController.cs   # System-wide Mutex & window messaging IPC
-├── VaultSecurity.cs              # AES-256, PBKDF2 (100k), HMAC-SHA256 cryptographic core
+├── VaultSecurity.cs              # AES-256, PBKDF2 (100k), HMAC-SHA256 cryptographic core & session wipe
 └── README.md                     # Master documentation
 ```
 
 ---
 
-## Automated Test Suite
+## KeePass Multi-Vault Architecture
 
-KeyCraft includes an extensive **20-test multi-tier automated test suite**:
+KeyCraft features a self-contained multi-database architecture inspired by KeePass:
+- **Standalone `.kcrypt` Portable Vault Files**: Each vault is completely self-contained with its own random 16-byte salt, AES-256 ciphertext, and HMAC-SHA256 authentication tag. Databases can be moved, renamed, backed up to USB drives, or synced across devices.
+- **Zero-Knowledge Password Verification**: The master password is **never stored** anywhere on disk or in configuration files. Unlocking verifies candidate passwords using constant-time HMAC-SHA256 token verification (`ConstantTimeEquals`).
+- **User Profile Default Location**: Default databases are stored safely under `%USERPROFILE%\KeyCraft\vault.kcrypt`.
+- **Persistent Memory & MRU Tracking**: Remembers `LastOpenedVaultPath` and maintains an MRU list of up to 10 `RecentVaults` with automatic deduplication.
+- **No User Entrapment**: If a user forgets a password, they are never blocked or forced to delete backend files. The unlock screen directly provides **"Open Other Vault"** and **"Create New Vault"** action buttons.
+- **Dynamic Database Switching**: Seamlessly switch or create vaults at runtime via the top toolbar or hotkeys (<kbd>Ctrl+N</kbd> New Vault, <kbd>Ctrl+O</kbd> Open Vault, <kbd>Ctrl+L</kbd> Lock Vault) without restarting the process.
 
-### Tier 1: Programmatic & Functional Engine Suite (`tests/TestRunner_Tier1.cs`)
-Validates core cryptographic operations, domain models, services, debouncing algorithms, and Win32 helpers in isolation:
-- **TC-01**: `SafeFileStorage` Atomic Write, Buffer Flushing & Rotating Backup
-- **TC-02**: PBKDF2 Key Derivation (100,000 Iterations & Deterministic Separation)
-- **TC-03**: AES-256-CBC Encryption & Decryption Roundtrip
-- **TC-04**: HMAC-SHA256 Tamper Detection & Constant-Time Integrity Verification
-- **TC-05**: Zero-Knowledge RAM Scrubbing (`VaultSecurity.LockSession` in-memory zeroing)
-- **TC-06**: Credential Model & Escape/Unescape Serialization
-- **TC-07**: `CredentialService` Arbitrary Reordering & Serial Number Shift Remapping
-- **TC-08**: `CredentialService` Column-Specific Search Filtering
-- **TC-09**: `DoublePressDebouncer` High-Precision Stopwatch Timing & Switch Jitter Filter
-- **TC-10**: Single-Instance Mutex Enforcement
-- **TC-11**: Global Hotkey Formatting & Win32 Availability Verification
-- **TC-12**: `AppSettings` Configuration Persistence
+---
 
-### Tier 2: End-to-End UI & System Automation Suite (`tests/TestRunner_Tier2.cs`)
-Controls the application from clean data wipe through the full user lifecycle:
-- **FLOW 1**: Clean Data Wipe & Master Password Creation UI
-- **FLOW 2**: Vault Lock & Master Password Unlock UI
-- **FLOW 3**: Credential Management CRUD, Remapping & Password Generator
-- **FLOW 4**: Real-Time Search Filtering & Quick Navigation
-- **FLOW 5**: Clipboard Password Copy & Toast Notification
-- **FLOW 6**: Debounced Double-Escape Minimize to System Tray
-- **FLOW 7**: Single-Instance IPC Wake-Up from Tray to Foreground
-- **FLOW 8**: Settings Panel, PowerToys Hotkey Rebinding & Close-to-Tray Preferences
+## Automated Test Suites
 
-### Running the Test Suite
-Execute the test runner script from PowerShell or Command Prompt:
+KeyCraft includes two complementary automated test suites:
+
+### 1. KeePass Multi-Vault Architecture Suite (`tests/TestRunner_MultiVault.cs`)
+Validates all aspects of the multi-database architecture:
+- **MV-01**: Standalone `.kcrypt` Header Format & Zero Plaintext Leaks
+- **MV-02**: Zero-Knowledge Multi-Vault Cryptographic Isolation (3 distinct vaults)
+- **MV-03**: Zero-Knowledge In-Memory Key Wipe & Locked State Enforcement
+- **MV-04**: HMAC-SHA256 Tamper Detection & Bit-Flip Rejection
+- **MV-05**: Vault Portability & Cross-Directory Relocation
+- **MV-06**: AppSettings Multi-Vault Memory, MRU Order & 10-Item Cap
+- **MV-07**: CredentialRepository Dynamic Switching & Total Data Isolation
+- **MV-08**: CredentialService Multi-Vault Reordering & Search Independence
+- **MV-09**: MasterPasswordForm UI Workflow - Dynamic Path Switching
+- **MV-10**: MasterPasswordForm UI Workflow - Create, Unlock & Fallback Modes
+- **MV-11**: MainForm UI Multi-Vault Live Switching & Title/Badge Sync
+- **MV-12**: Keyboard Shortcut Routing (<kbd>Ctrl+N</kbd>, <kbd>Ctrl+O</kbd>, <kbd>Ctrl+L</kbd>) & Session Locking
+- **MV-13**: CLI Argument Parsing for Vault Auto-Loading (`-f`, `--file`, `--vault`, positional)
+
+**Run Multi-Vault Tests:**
 ```cmd
-scripts\run_tests.bat
+scripts\run_multivault_tests.bat
 ```
 Or via PowerShell:
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run_tests.ps1
+powershell -ExecutionPolicy Bypass -File scripts\run_multivault_tests.ps1
 ```
+
+### 2. Tier 1 & Tier 2 End-to-End Suite (`scripts/run_tests.ps1`)
+- **Tier 1 (14 Engine Tests)**: Low-level cryptographic primitives, debouncing algorithms, single-instance mutex, and safe atomic disk flush.
+- **Tier 2 (9 UI Flows)**: Automated WinForms UI control from clean wipe through master password creation, CRUD, live filtering, clipboard copying, tray minimization, and IPC wake-up.
+

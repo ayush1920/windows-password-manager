@@ -38,6 +38,8 @@ namespace PasswordGui
             RunTest("TC-10: Single-Instance Mutex Enforcement", Test_SingleInstanceMutex);
             RunTest("TC-11: Global Hotkey Formatting & Win32 Availability Test", Test_GlobalHotkey);
             RunTest("TC-12: AppSettings Configuration Persistence", Test_AppSettings);
+            RunTest("TC-13: AppSettings Default Vault Resolution & Recent Vaults", Test_AppSettings_MultiVault);
+            RunTest("TC-14: CredentialRepository Dynamic Database Switching", Test_CredentialRepository_SwitchDatabase);
 
             Console.WriteLine();
             Console.WriteLine("------------------------------------------------------------------");
@@ -426,6 +428,71 @@ namespace PasswordGui
             settings.HotkeyModifiers = GlobalHotkeyManager.MOD_CONTROL | GlobalHotkeyManager.MOD_ALT;
             settings.HotkeyKey = Keys.K;
             settings.Save();
+        }
+
+        private static void Test_AppSettings_MultiVault()
+        {
+            AppSettings settings = new AppSettings();
+            string def = AppSettings.GetDefaultVaultPath();
+            Assert(!string.IsNullOrEmpty(def), "Default vault path must not be empty");
+            Assert(def.EndsWith(".txt") || def.EndsWith(".kcrypt"), "Default vault path must have valid vault extension: " + def);
+
+            // Test Recent Vaults deduplication & capping
+            settings.RecentVaults.Clear();
+            string pathA = @"C:\KeyCraft\vaultA.kcrypt";
+            string pathB = @"C:\KeyCraft\vaultB.kcrypt";
+            string pathC = @"C:\KeyCraft\vaultC.kcrypt";
+
+            settings.AddRecentVault(pathA);
+            settings.AddRecentVault(pathB);
+            settings.AddRecentVault(pathC);
+            settings.AddRecentVault(pathA); // Re-add A (should move to top)
+
+            Assert(settings.RecentVaults.Count == 3, "RecentVaults must deduplicate entries");
+            Assert(string.Equals(settings.RecentVaults[0], pathA, StringComparison.OrdinalIgnoreCase), "Most recently added vault must be at index 0");
+            Assert(string.Equals(settings.RecentVaults[1], pathC, StringComparison.OrdinalIgnoreCase), "Second most recently added vault must be at index 1");
+            Assert(string.Equals(settings.LastOpenedVaultPath, pathA, StringComparison.OrdinalIgnoreCase), "LastOpenedVaultPath must update to most recent");
+
+            // Cap at 10 items
+            for (int i = 0; i < 15; i++)
+            {
+                settings.AddRecentVault(@"C:\KeyCraft\vault_" + i + ".kcrypt");
+            }
+            Assert(settings.RecentVaults.Count == 10, "RecentVaults must cap at maximum 10 items");
+        }
+
+        private static void Test_CredentialRepository_SwitchDatabase()
+        {
+            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_vaults");
+            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+
+            string file1 = Path.Combine(dir, "vault1.txt");
+            string file2 = Path.Combine(dir, "vault2.txt");
+
+            if (File.Exists(file1)) File.Delete(file1);
+            if (File.Exists(file2)) File.Delete(file2);
+
+            CredentialRepository repo = new CredentialRepository(file1);
+            Assert(repo.GetFilePath() == file1, "Initial repository path must match file1");
+
+            repo.Add(new Credential("Service One", "user1", "pass1"));
+            Assert(repo.GetAll().Count == 1, "File 1 must contain 1 credential");
+
+            // Switch to File 2
+            repo.SwitchDatabase(file2);
+            Assert(repo.GetFilePath() == file2, "Switched repository path must match file2");
+            Assert(repo.GetAll().Count == 0, "File 2 must initially be empty");
+
+            repo.Add(new Credential("Service Two A", "user2a", "pass2a"));
+            repo.Add(new Credential("Service Two B", "user2b", "pass2b"));
+            Assert(repo.GetAll().Count == 2, "File 2 must contain 2 credentials");
+
+            // Switch back to File 1
+            repo.SwitchDatabase(file1);
+            Assert(repo.GetAll().Count == 1, "File 1 must still contain its original 1 credential");
+
+            // Cleanup
+            try { File.Delete(file1); File.Delete(file2); Directory.Delete(dir); } catch { }
         }
     }
 }

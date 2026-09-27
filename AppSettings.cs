@@ -14,13 +14,15 @@ namespace PasswordGui
     {
         private const string RunRegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string AppRegistryName = "KeyCraftPasswordManager";
-        private static readonly string SettingsFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "settings.conf");
+        private static readonly string SettingsFilePath = GetSettingsFilePath();
 
         public bool RunOnStartup { get; set; }
         public bool CloseToTray { get; set; }
         public bool HotkeyEnabled { get; set; }
         public int HotkeyModifiers { get; set; } // MOD_CONTROL(2), MOD_ALT(1), MOD_SHIFT(4), MOD_WIN(8)
         public Keys HotkeyKey { get; set; }
+        public string LastOpenedVaultPath { get; set; }
+        public System.Collections.Generic.List<string> RecentVaults { get; set; }
 
         public AppSettings()
         {
@@ -30,6 +32,70 @@ namespace PasswordGui
             HotkeyEnabled = true;
             HotkeyModifiers = 0x0001 | 0x0002; // Alt + Control
             HotkeyKey = Keys.K;
+            RecentVaults = new System.Collections.Generic.List<string>();
+            LastOpenedVaultPath = GetDefaultVaultPath();
+        }
+
+        public static string GetSettingsFilePath()
+        {
+            string localData = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+            if (Directory.Exists(localData) && File.Exists(Path.Combine(localData, "settings.conf")))
+            {
+                return Path.Combine(localData, "settings.conf");
+            }
+
+            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string appDir = Path.Combine(appData, "KeyCraft");
+            if (!Directory.Exists(appDir))
+            {
+                try { Directory.CreateDirectory(appDir); } catch { }
+            }
+            return Path.Combine(appDir, "settings.conf");
+        }
+
+        public static string GetDefaultVaultPath()
+        {
+            // 1. Backwards compatibility: if data/credentials.txt already exists, use it
+            string localData = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "credentials.txt");
+            if (File.Exists(localData))
+            {
+                return Path.GetFullPath(localData);
+            }
+
+            // 2. Default to user's home directory: %USERPROFILE%\KeyCraft\vault.kcrypt
+            string userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (string.IsNullOrEmpty(userHome))
+            {
+                userHome = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            }
+
+            string targetDir = Path.Combine(userHome, "KeyCraft");
+            if (!Directory.Exists(targetDir))
+            {
+                try { Directory.CreateDirectory(targetDir); } catch { }
+            }
+            return Path.Combine(targetDir, "vault.kcrypt");
+        }
+
+        public void AddRecentVault(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                string fullPath = Path.GetFullPath(path);
+                if (RecentVaults == null) RecentVaults = new System.Collections.Generic.List<string>();
+
+                RecentVaults.RemoveAll(p => string.Equals(p, fullPath, StringComparison.OrdinalIgnoreCase));
+                RecentVaults.Insert(0, fullPath);
+
+                if (RecentVaults.Count > 10)
+                {
+                    RecentVaults.RemoveRange(10, RecentVaults.Count - 10);
+                }
+
+                LastOpenedVaultPath = fullPath;
+            }
+            catch { }
         }
 
         public static AppSettings Load()
@@ -38,9 +104,10 @@ namespace PasswordGui
 
             try
             {
-                if (File.Exists(SettingsFilePath))
+                string filePath = GetSettingsFilePath();
+                if (File.Exists(filePath))
                 {
-                    string[] lines = File.ReadAllLines(SettingsFilePath, Encoding.UTF8);
+                    string[] lines = File.ReadAllLines(filePath, Encoding.UTF8);
                     foreach (string rawLine in lines)
                     {
                         string line = rawLine.Trim();
@@ -76,11 +143,41 @@ namespace PasswordGui
                                 }
                                 catch { }
                             }
+                            else if (string.Equals(key, "LastOpenedVaultPath", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!string.IsNullOrEmpty(val)) settings.LastOpenedVaultPath = val;
+                            }
+                            else if (string.Equals(key, "RecentVaults", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!string.IsNullOrEmpty(val))
+                                {
+                                    string[] parts = val.Split(';');
+                                    foreach (string p in parts)
+                                    {
+                                        string trimmedP = p.Trim();
+                                        if (!string.IsNullOrEmpty(trimmedP) && !settings.RecentVaults.Contains(trimmedP))
+                                        {
+                                            settings.RecentVaults.Add(trimmedP);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
             catch { }
+
+            // Ensure last opened vault path is valid or default
+            if (string.IsNullOrEmpty(settings.LastOpenedVaultPath))
+            {
+                settings.LastOpenedVaultPath = GetDefaultVaultPath();
+            }
+
+            if (!settings.RecentVaults.Contains(settings.LastOpenedVaultPath) && File.Exists(settings.LastOpenedVaultPath))
+            {
+                settings.RecentVaults.Insert(0, settings.LastOpenedVaultPath);
+            }
 
             return settings;
         }
@@ -89,6 +186,7 @@ namespace PasswordGui
         {
             try
             {
+                string filePath = GetSettingsFilePath();
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("# KeyCraft Configuration File");
                 sb.AppendLine("RunOnStartup=" + RunOnStartup);
@@ -96,8 +194,13 @@ namespace PasswordGui
                 sb.AppendLine("HotkeyEnabled=" + HotkeyEnabled);
                 sb.AppendLine("HotkeyModifiers=" + HotkeyModifiers);
                 sb.AppendLine("HotkeyKey=" + HotkeyKey);
+                sb.AppendLine("LastOpenedVaultPath=" + (LastOpenedVaultPath ?? string.Empty));
+                if (RecentVaults != null && RecentVaults.Count > 0)
+                {
+                    sb.AppendLine("RecentVaults=" + string.Join(";", RecentVaults.ToArray()));
+                }
 
-                SafeFileStorage.WriteAllTextAtomic(SettingsFilePath, sb.ToString(), false);
+                SafeFileStorage.WriteAllTextAtomic(filePath, sb.ToString(), false);
 
                 // Apply to Windows Registry
                 ApplyStartupRegistry(RunOnStartup);

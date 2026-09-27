@@ -48,6 +48,7 @@ namespace PasswordGui
                 RunFlow("FLOW 6: Debounced Double-Escape Minimize to System Tray", Test_Flow6_DoubleEscapeTrayMinimize);
                 RunFlow("FLOW 7: Single-Instance IPC Wake-Up from Tray to Foreground", Test_Flow7_SingleInstanceWakeUp);
                 RunFlow("FLOW 8: Settings Panel, PowerToys Hotkey & CloseToTray", Test_Flow8_SettingsAndPreferences);
+                RunFlow("FLOW 9: KeePass Multi-Vault Dynamic Creation & Switching", Test_Flow9_KeePassMultiVault);
             }
             finally
             {
@@ -339,14 +340,28 @@ namespace PasswordGui
 
                 // Select row 0
                 lv.Items[0].Selected = true;
+                Application.DoEvents();
                 InvokeMethod(form, "LvCredentials_SelectedIndexChanged", lv, EventArgs.Empty);
+                Application.DoEvents();
                 Credential selected = lv.Items[0].Tag as Credential;
                 Assert(selected != null, "Selected credential tag must not be null");
 
                 // Copy password to clipboard
                 btnCopy.PerformClick();
+                Application.DoEvents();
 
-                string clipText = Clipboard.GetText();
+                string clipText = null;
+                for (int i = 0; i < 10; i++)
+                {
+                    try
+                    {
+                        clipText = Clipboard.GetText();
+                        if (!string.IsNullOrEmpty(clipText)) break;
+                    }
+                    catch { }
+                    Thread.Sleep(50);
+                }
+
                 Assert(clipText == selected.Password, "Clipboard text must match selected credential password exactly");
                 Assert(lblToast.Text.Contains("copied"), "Toast text must indicate successful copy");
             }
@@ -463,6 +478,108 @@ namespace PasswordGui
                 bool ok = VaultSecurity.UnlockVault(vaultPath, "OmegaMaster2026!", out decrypted);
                 Assert(ok, "Vault must unlock with newly rotated master password OmegaMaster2026!");
             }
+        }
+
+        private static void Test_Flow9_KeePassMultiVault()
+        {
+            string tempDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "multi_vault_test");
+            if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+
+            string vaultA = Path.Combine(tempDir, "personal.kcrypt");
+            string vaultB = Path.Combine(tempDir, "work.kcrypt");
+
+            if (File.Exists(vaultA)) File.Delete(vaultA);
+            if (File.Exists(vaultB)) File.Delete(vaultB);
+
+            // 1. Create Vault A via MasterPasswordForm
+            using (MasterPasswordForm formA = new MasterPasswordForm(MasterPasswordMode.Create, vaultA))
+            {
+                formA.CreateControl();
+                formA.Show();
+
+                TextBox txtP = GetField<TextBox>(formA, "txtPassword");
+                TextBox txtC = GetField<TextBox>(formA, "txtConfirm");
+                txtP.Text = "PersonalPass2026!";
+                txtC.Text = "PersonalPass2026!";
+                InvokeMethod(formA, "HandleSubmit");
+
+                Assert(formA.DialogResult == DialogResult.OK, "FormA must succeed");
+                Assert(VaultSecurity.IsVaultEncrypted(vaultA), "VaultA must be encrypted");
+            }
+
+            // Seed Vault A with credential
+            CredentialRepository repoA = new CredentialRepository(vaultA);
+            repoA.Add(new Credential("Netflix", "userA", "netflixPass"));
+
+            // 2. Create Vault B via MasterPasswordForm
+            using (MasterPasswordForm formB = new MasterPasswordForm(MasterPasswordMode.Create, vaultB))
+            {
+                formB.CreateControl();
+                formB.Show();
+
+                TextBox txtP = GetField<TextBox>(formB, "txtPassword");
+                TextBox txtC = GetField<TextBox>(formB, "txtConfirm");
+                txtP.Text = "WorkPass2026!";
+                txtC.Text = "WorkPass2026!";
+                InvokeMethod(formB, "HandleSubmit");
+
+                Assert(formB.DialogResult == DialogResult.OK, "FormB must succeed");
+                Assert(VaultSecurity.IsVaultEncrypted(vaultB), "VaultB must be encrypted");
+            }
+
+            // Seed Vault B with credential
+            CredentialRepository repoB = new CredentialRepository(vaultB);
+            repoB.Add(new Credential("Company GitHub", "userB", "workToken123"));
+
+            // 3. Cryptographic isolation verification: wrong password must fail
+            VaultSecurity.LockSession();
+            string dec;
+            Assert(!VaultSecurity.UnlockVault(vaultA, "WorkPass2026!", out dec), "Unlocking VaultA with VaultB password must fail");
+            Assert(VaultSecurity.UnlockVault(vaultA, "PersonalPass2026!", out dec), "Unlocking VaultA with correct password must succeed");
+
+            VaultSecurity.LockSession();
+            Assert(!VaultSecurity.UnlockVault(vaultB, "PersonalPass2026!", out dec), "Unlocking VaultB with VaultA password must fail");
+            Assert(VaultSecurity.UnlockVault(vaultB, "WorkPass2026!", out dec), "Unlocking VaultB with correct password must succeed");
+
+            // 4. Test Dynamic Vault Switching in MainForm
+            VaultSecurity.UnlockVault(vaultA, "PersonalPass2026!", out dec);
+            CredentialService service = new CredentialService(new CredentialRepository(vaultA));
+            using (MainForm main = new MainForm(service))
+            {
+                main.CreateControl();
+                main.Show();
+                Application.DoEvents();
+
+                Assert(main.Text.Contains("personal.kcrypt"), "MainForm title must show personal.kcrypt");
+                ListView lv = GetField<ListView>(main, "lvCredentials");
+                Assert(lv.Items.Count > 0, "MainForm must have loaded items from VaultA");
+                Assert(lv.Items[0].SubItems[1].Text == "Netflix", "MainForm must display Netflix credential from VaultA");
+
+                // Switch to Vault B (unlock session first before switching with alreadyUnlocked=true)
+                VaultSecurity.UnlockVault(vaultB, "WorkPass2026!", out dec);
+                main.SwitchToVaultFile(vaultB, true);
+                Application.DoEvents();
+                Assert(main.Text.Contains("work.kcrypt"), "MainForm title must update to work.kcrypt");
+                Assert(service.GetVaultFilePath() == vaultB, "Service must now point to VaultB");
+                Assert(lv.Items[0].SubItems[1].Text == "Company GitHub", "MainForm must display Company GitHub from VaultB");
+
+                // Switch back to Vault A
+                VaultSecurity.UnlockVault(vaultA, "PersonalPass2026!", out dec);
+                main.SwitchToVaultFile(vaultA, true);
+                Application.DoEvents();
+                Assert(main.Text.Contains("personal.kcrypt"), "MainForm title must return to personal.kcrypt");
+                Assert(service.GetVaultFilePath() == vaultA, "Service must point back to VaultA");
+                Assert(lv.Items[0].SubItems[1].Text == "Netflix", "MainForm must display Netflix again");
+            }
+
+            // Cleanup
+            try
+            {
+                if (File.Exists(vaultA)) File.Delete(vaultA);
+                if (File.Exists(vaultB)) File.Delete(vaultB);
+                if (Directory.Exists(tempDir)) Directory.Delete(tempDir, true);
+            }
+            catch { }
         }
     }
 }

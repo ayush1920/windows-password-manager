@@ -204,6 +204,14 @@ namespace PasswordGui
         }
 
         /// <summary>
+        /// Shorthand helper to initialize and encrypt a vault.
+        /// </summary>
+        public static void InitVault(string filePath, string masterPassword, string initialPlainText = "")
+        {
+            InitializeAndEncryptVault(filePath, masterPassword, initialPlainText);
+        }
+
+        /// <summary>
         /// Verifies the master password and unlocks the database vault.
         /// </summary>
         public static bool UnlockVault(string filePath, string masterPassword, out string decryptedPlainText)

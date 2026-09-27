@@ -275,5 +275,10 @@ namespace PasswordGui
         {
             return repository.GetFilePath();
         }
+
+        public void SwitchDatabase(string newFilePath)
+        {
+            repository.SwitchDatabase(newFilePath);
+        }
     }
 }

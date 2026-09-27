@@ -477,6 +477,12 @@ namespace PasswordGui
         private ModernButton btnRefresh;
         private ModernButton btnSettings;
 
+        // Vault Toolbar Controls (KeePass Style)
+        private Label lblVaultBadge;
+        private ModernButton btnNewVault;
+        private ModernButton btnOpenVault;
+        private ModernButton btnLockVault;
+
         // System Tray & Keyboard Routing
         private NotifyIcon notifyIcon;
         private ContextMenuStrip trayMenu;
@@ -589,6 +595,7 @@ namespace PasswordGui
             hotkeyManager.HotkeyPressed += delegate { RestoreFromTray(); };
 
             InitializeComponent();
+            UpdateTitleAndVaultDisplay();
             LoadCredentials();
             this.ActiveControl = txtSearch;
         }
@@ -763,6 +770,79 @@ namespace PasswordGui
             lblHeaderSubtitle.Location = new Point(26, 34);
             lblHeaderSubtitle.AutoSize = true;
             panelHeader.Controls.Add(lblHeaderSubtitle);
+
+            // Vault Toolbar on Header Right (KeePass Style)
+            Panel pnlVaultHeader = new Panel();
+            pnlVaultHeader.Dock = DockStyle.Right;
+            pnlVaultHeader.Width = 470;
+            pnlVaultHeader.Height = 44;
+            pnlVaultHeader.BackColor = Color.Transparent;
+
+            // Active Vault Pill Label
+            lblVaultBadge = new Label();
+            lblVaultBadge.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+            lblVaultBadge.ForeColor = ColorPrimaryHover;
+            lblVaultBadge.BackColor = ColorBgCard;
+            lblVaultBadge.Location = new Point(0, 14);
+            lblVaultBadge.Size = new Size(160, 32);
+            lblVaultBadge.TextAlign = ContentAlignment.MiddleCenter;
+            lblVaultBadge.Cursor = Cursors.Hand;
+            lblVaultBadge.Paint += delegate(object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(ColorBorder, 1f))
+                {
+                    pe.Graphics.DrawRectangle(p, 0, 0, lblVaultBadge.Width - 1, lblVaultBadge.Height - 1);
+                }
+            };
+            lblVaultBadge.Click += delegate { OpenVault(); };
+            pnlVaultHeader.Controls.Add(lblVaultBadge);
+
+            // New Vault Button (Ctrl+N)
+            btnNewVault = new ModernButton();
+            btnNewVault.Text = "New Vault";
+            btnNewVault.IconType = ButtonIcon.Plus;
+            btnNewVault.Location = new Point(168, 14);
+            btnNewVault.Size = new Size(95, 32);
+            btnNewVault.CornerRadius = 4.0f;
+            btnNewVault.NormalBg = ColorSecondary;
+            btnNewVault.HoverBg = ColorSecondaryHover;
+            btnNewVault.BorderColor = ColorSecondaryBorder;
+            btnNewVault.NormalFg = ColorTextPrimary;
+            btnNewVault.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+            btnNewVault.Click += delegate { NewVault(); };
+            pnlVaultHeader.Controls.Add(btnNewVault);
+
+            // Open Vault Button (Ctrl+O)
+            btnOpenVault = new ModernButton();
+            btnOpenVault.Text = "Open...";
+            btnOpenVault.IconType = ButtonIcon.Search;
+            btnOpenVault.Location = new Point(270, 14);
+            btnOpenVault.Size = new Size(92, 32);
+            btnOpenVault.CornerRadius = 4.0f;
+            btnOpenVault.NormalBg = ColorSecondary;
+            btnOpenVault.HoverBg = ColorSecondaryHover;
+            btnOpenVault.BorderColor = ColorSecondaryBorder;
+            btnOpenVault.NormalFg = ColorTextPrimary;
+            btnOpenVault.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+            btnOpenVault.Click += delegate { OpenVault(); };
+            pnlVaultHeader.Controls.Add(btnOpenVault);
+
+            // Lock Vault Button (Ctrl+L)
+            btnLockVault = new ModernButton();
+            btnLockVault.Text = "Lock";
+            btnLockVault.IconType = ButtonIcon.Lock;
+            btnLockVault.Location = new Point(368, 14);
+            btnLockVault.Size = new Size(82, 32);
+            btnLockVault.CornerRadius = 4.0f;
+            btnLockVault.NormalBg = ColorSecondary;
+            btnLockVault.HoverBg = ColorSecondaryHover;
+            btnLockVault.BorderColor = ColorSecondaryBorder;
+            btnLockVault.NormalFg = ColorWarningBg;
+            btnLockVault.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+            btnLockVault.Click += delegate { LockVault(); };
+            pnlVaultHeader.Controls.Add(btnLockVault);
+
+            panelHeader.Controls.Add(pnlVaultHeader);
 
             panelMain.Controls.Add(panelHeader);
 
@@ -1696,11 +1776,6 @@ namespace PasswordGui
             txtSearch.SelectAll();
         }
 
-        private void LockVault()
-        {
-            this.Close();
-        }
-
         private void QuitApplication()
         {
             if (notifyIcon != null)
@@ -1845,6 +1920,23 @@ namespace PasswordGui
             }
 
             if (handled) return true;
+
+            // KeePass Global Vault Shortcuts
+            if (keyData == (Keys.Control | Keys.O))
+            {
+                OpenVault();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.N))
+            {
+                NewVault();
+                return true;
+            }
+            if (keyData == (Keys.Control | Keys.L))
+            {
+                LockVault();
+                return true;
+            }
 
             // Sequential Enter key traversal between editor inputs
             if (keyData == Keys.Enter)
@@ -2114,21 +2206,43 @@ namespace PasswordGui
             {
                 target = selectedCredential;
             }
+            else if (lvCredentials.Items.Count > 0 && lvCredentials.Items[0].Tag != null)
+            {
+                target = lvCredentials.Items[0].Tag as Credential;
+            }
             else if (!string.IsNullOrEmpty(txtPassword.Text))
             {
-                Clipboard.SetText(txtPassword.Text);
+                SafeSetClipboardText(txtPassword.Text);
                 ShowToast("✓ Password copied to clipboard!");
                 return;
             }
 
             if (target != null && !string.IsNullOrEmpty(target.Password))
             {
-                Clipboard.SetText(target.Password);
+                SafeSetClipboardText(target.Password);
                 ShowToast(string.Format("✓ Password for '{0}' copied!", target.Service));
             }
             else
             {
                 MessageBox.Show(this, "Please select a credential to copy its password.", "Notice", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+
+        private void SafeSetClipboardText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            for (int i = 0; i < 8; i++)
+            {
+                try
+                {
+                    Clipboard.Clear();
+                    Clipboard.SetDataObject(text, true, 5, 50);
+                    return;
+                }
+                catch (Exception)
+                {
+                    System.Threading.Thread.Sleep(50);
+                }
             }
         }
 
@@ -2211,6 +2325,10 @@ namespace PasswordGui
             {
                 if (unlockForm.ShowDialog() == DialogResult.OK)
                 {
+                    if (!string.Equals(unlockForm.SelectedVaultPath, repoPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        SwitchToVaultFile(unlockForm.SelectedVaultPath, true);
+                    }
                     this.Show();
                     LoadCredentials();
                 }
@@ -2218,6 +2336,145 @@ namespace PasswordGui
                 {
                     Application.Exit();
                 }
+            }
+        }
+
+        // ==========================================
+        // KEEPASS MULTI-VAULT OPERATIONS
+        // ==========================================
+
+        public void UpdateTitleAndVaultDisplay()
+        {
+            string vaultPath = service.GetVaultFilePath();
+            string fileName = System.IO.Path.GetFileName(vaultPath);
+            if (string.IsNullOrEmpty(fileName)) fileName = "vault.kcrypt";
+
+            this.Text = string.Format("KeyCraft — [{0}]", fileName);
+            if (lblAppTitle != null)
+            {
+                lblAppTitle.Text = string.Format("KeyCraft  —  [{0}]", fileName);
+            }
+            if (lblVaultBadge != null)
+            {
+                lblVaultBadge.Text = "📁 " + fileName;
+                ToolTip tt = new ToolTip();
+                tt.SetToolTip(lblVaultBadge, "Active Vault: " + vaultPath + "\nClick to open another database");
+            }
+            if (lblStatusFile != null)
+            {
+                lblStatusFile.Text = "📁 " + vaultPath;
+            }
+        }
+
+        public void OpenVault()
+        {
+            using (OpenFileDialog ofd = new OpenFileDialog())
+            {
+                ofd.Title = "Open KeyCraft Vault Database";
+                ofd.Filter = "KeyCraft Vault (*.kcrypt;*.kdb;*.txt)|*.kcrypt;*.kdb;*.txt|All Files (*.*)|*.*";
+                ofd.CheckFileExists = true;
+                string currentDir = System.IO.Path.GetDirectoryName(service.GetVaultFilePath());
+                if (!string.IsNullOrEmpty(currentDir) && System.IO.Directory.Exists(currentDir))
+                {
+                    ofd.InitialDirectory = currentDir;
+                }
+
+                if (ofd.ShowDialog(this) == DialogResult.OK)
+                {
+                    SwitchToVaultFile(ofd.FileName);
+                }
+            }
+        }
+
+        public void NewVault()
+        {
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Title = "Create New KeyCraft Vault Database";
+                sfd.Filter = "KeyCraft Encrypted Vault (*.kcrypt)|*.kcrypt|All Files (*.*)|*.*";
+                sfd.DefaultExt = "kcrypt";
+                sfd.AddExtension = true;
+                sfd.FileName = "vault.kcrypt";
+                string currentDir = System.IO.Path.GetDirectoryName(service.GetVaultFilePath());
+                if (!string.IsNullOrEmpty(currentDir) && System.IO.Directory.Exists(currentDir))
+                {
+                    sfd.InitialDirectory = currentDir;
+                }
+
+                if (sfd.ShowDialog(this) == DialogResult.OK)
+                {
+                    CreateAndSwitchVault(sfd.FileName);
+                }
+            }
+        }
+
+        public void LockVault()
+        {
+            LockVaultAndPrompt();
+        }
+
+        public void SwitchToVaultFile(string newPath, bool alreadyUnlocked = false)
+        {
+            if (string.IsNullOrEmpty(newPath)) return;
+            try
+            {
+                string fullPath = System.IO.Path.GetFullPath(newPath);
+                if (!alreadyUnlocked)
+                {
+                    bool isEncrypted = VaultSecurity.IsVaultEncrypted(fullPath);
+                    MasterPasswordMode m = isEncrypted ? MasterPasswordMode.Unlock : MasterPasswordMode.Create;
+                    using (MasterPasswordForm form = new MasterPasswordForm(m, fullPath))
+                    {
+                        if (form.ShowDialog(this) != DialogResult.OK)
+                        {
+                            return; // Cancelled
+                        }
+                        fullPath = form.SelectedVaultPath;
+                    }
+                }
+
+                service.SwitchDatabase(fullPath);
+                appSettings.AddRecentVault(fullPath);
+                appSettings.Save();
+
+                UpdateTitleAndVaultDisplay();
+                LoadCredentials();
+                ClearEditor();
+                ShowToast("📁 Active Vault: " + System.IO.Path.GetFileName(fullPath));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Failed to switch vault: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        public void CreateAndSwitchVault(string newPath)
+        {
+            if (string.IsNullOrEmpty(newPath)) return;
+            try
+            {
+                string fullPath = System.IO.Path.GetFullPath(newPath);
+                using (MasterPasswordForm createForm = new MasterPasswordForm(MasterPasswordMode.Create, fullPath))
+                {
+                    if (createForm.ShowDialog(this) != DialogResult.OK)
+                    {
+                        return; // Cancelled
+                    }
+                    fullPath = createForm.SelectedVaultPath;
+                }
+
+                service.SwitchDatabase(fullPath);
+                appSettings.AddRecentVault(fullPath);
+                appSettings.Save();
+
+                UpdateTitleAndVaultDisplay();
+                LoadCredentials();
+                ClearEditor();
+                ShowToast("✓ New vault created & active!");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Failed to create vault: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }

@@ -10,54 +10,29 @@ namespace PasswordGui
     /// </summary>
     public class CredentialRepository
     {
-        private readonly string filePath;
+        private string filePath;
         private const string Delimiter = "|";
         private const string PipeEscape = "%%PIPE%%";
 
         public static string GetDefaultPath()
         {
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            string parentDataDir = Path.Combine(baseDir, "..", "data");
-            string localDataDir = Path.Combine(baseDir, "data");
-
-            string targetDir;
-            if (Directory.Exists(parentDataDir))
-            {
-                targetDir = Path.GetFullPath(parentDataDir);
-            }
-            else if (Directory.Exists(localDataDir))
-            {
-                targetDir = Path.GetFullPath(localDataDir);
-            }
-            else
-            {
-                string dirName = new DirectoryInfo(baseDir).Name;
-                if (string.Equals(dirName, "bin", StringComparison.OrdinalIgnoreCase))
-                {
-                    targetDir = Path.GetFullPath(parentDataDir);
-                }
-                else
-                {
-                    targetDir = Path.GetFullPath(localDataDir);
-                }
-            }
-
-            if (!Directory.Exists(targetDir))
-            {
-                Directory.CreateDirectory(targetDir);
-            }
-
-            return Path.Combine(targetDir, "credentials.txt");
+            return AppSettings.GetDefaultVaultPath();
         }
 
         public CredentialRepository(string customPath = null)
         {
-            filePath = string.IsNullOrEmpty(customPath) ? GetDefaultPath() : customPath;
+            filePath = string.IsNullOrEmpty(customPath) ? GetDefaultPath() : Path.GetFullPath(customPath);
         }
 
         public string GetFilePath()
         {
             return filePath;
+        }
+
+        public void SwitchDatabase(string newFilePath)
+        {
+            if (string.IsNullOrEmpty(newFilePath)) throw new ArgumentNullException("newFilePath");
+            this.filePath = Path.GetFullPath(newFilePath);
         }
 
         /// <summary>
