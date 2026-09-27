@@ -90,30 +90,29 @@ sequenceDiagram
     actor User
     participant Process2 as New Instance (Shortcut/CLI)
     participant Mutex as Named Mutex
-    participant Win32 as Win32 IPC
+    participant Pipe as Named Pipe IPC
     participant Process1 as Background KeyCraft (Tray)
 
     User->>Process2: Launch via Shortcut or Hotkey
     Process2->>Mutex: SingleInstanceController.TryAcquireMutex()
     alt Mutex Not Held (First Run)
         Mutex-->>Process2: Acquired
+        Process2->>Pipe: Start Named Pipe Server (Background Listener)
         Process2->>Process2: Prompt Master Password & Run Main Loop
     else Mutex Already Held (Already Running)
         Mutex-->>Process2: Denied (Instance exists)
-        Process2->>Win32: PostMessage(HWND_BROADCAST, RestoreWindowMsg) + EnumWindows
-        Win32->>Process1: Deliver Msg to MainForm.WndProc
-        Process1->>Process1: RestoreFromTray() -> Show, BringToFront, Focus txtSearch
+        Process2->>Pipe: Connect to Named Pipe & Send "RESTORE" / "OPEN:<path>"
+        Pipe->>Process1: Signal received on background thread
+        Process1->>Process1: BeginInvoke -> RestoreFromTray() -> Show, Focus txtSearch
         Process2->>Process2: Terminate immediately (<60ms)
     end
 ```
 
 ### IPC Technical Details
-1. **Named Mutex**: `Local\KeyCraftPasswordManager_SingleInstance_Mutex`.
-2. **Registered Windows Message**: `RegisterWindowMessage("KeyCraft_RestoreWindow_Message_V1")`.
-3. **UIPI Bypass**: `NativeMethods.ChangeWindowMessageFilter(msgId, MSGFLT_ADD)` allows messages to pass freely across user privilege boundaries.
-4. **Dual Window Discovery**:
-   - `PostMessage(HWND_BROADCAST, msgId, ...)` broadcasts to all top-level windows.
-   - `EnumWindows` scans all windows belonging to the existing process ID, ensuring instantaneous restore even when the window was completely hidden (`Visible = false`) in the system tray.
+1. **Named Mutex**: `Local\KeyCraftPasswordManager_SingleInstance_Mutex` ensures instant (<1ms) single-instance detection.
+2. **Local Named Pipe IPC**: `KeyCraft_SingleInstance_IPC_Pipe_V2` provides zero-latency inter-process communication without touching Win32 window handles.
+3. **Strict Window Isolation (Zero Leaks)**: By communicating directly through Named Pipes and UI thread `BeginInvoke`, KeyCraft **never** forces `ShowWindowAsync` or enumerates internal runtime handles. This completely prevents hidden CLR helper windows (`GDI+ Window`, `.NET-BroadcastEventWindow`, parking windows) from ever surfacing in Windows Alt+Tab or taskbar.
+4. **Targeted Win32 Fallback**: If the named pipe is ever unreachable, the fallback mechanism strictly filters window titles by `title.StartsWith("KeyCraft")`, ensuring helper windows remain hidden.
 
 ---
 
@@ -251,10 +250,13 @@ windows-password-manager/
 │   ├── fetch_icons.py            # Lucide icon asset fetcher
 │   ├── run_multivault_tests.bat  # Batch runner for dedicated KeePass Multi-Vault test suite
 │   ├── run_multivault_tests.ps1  # PowerShell runner for Multi-Vault test suite (13 comprehensive tests)
+│   ├── run_single_instance_tests.bat # Batch runner for Single-Instance & IPC test suite
+│   ├── run_single_instance_tests.ps1 # PowerShell runner for Single-Instance test suite (8 tests)
 │   ├── run_tests.bat             # Batch launcher for automated test suites
 │   └── run_tests.ps1             # PowerShell automated test runner (Tier 1 & Tier 2)
 ├── tests/
 │   ├── TestRunner_MultiVault.cs  # Comprehensive KeePass Multi-Vault Test Suite (13 tests)
+│   ├── TestRunner_SingleInstance.cs # Dedicated Single-Instance & IPC Test Suite (8 tests)
 │   ├── TestRunner_Tier1.cs       # Tier 1: Programmatic engine & cryptographic test suite (14 tests)
 │   └── TestRunner_Tier2.cs       # Tier 2: End-to-end UI & system automation test suite (9 flows)
 ├── AppSettings.cs                # Configuration persistence, MRU vaults, Windows startup registry
@@ -319,7 +321,27 @@ Or via PowerShell:
 powershell -ExecutionPolicy Bypass -File scripts\run_multivault_tests.ps1
 ```
 
-### 2. Tier 1 & Tier 2 End-to-End Suite (`scripts/run_tests.ps1`)
+### 2. Single-Instance & IPC Test Suite (`tests/TestRunner_SingleInstance.cs`)
+Validates process uniqueness, Named Pipe IPC transmission, and strictly verifies zero helper window leaks:
+- **SI-01**: Primary Mutex Acquisition & Secondary Exclusion
+- **SI-02**: Named Pipe IPC Server Lifecycle (Start, Connect & Clean Stop)
+- **SI-03**: Secondary Instance Signal Delivery (Named Pipe Transmission)
+- **SI-04**: Multi-Message & Argument Forwarding (`RESTORE_MAXIMIZE`, `OPEN:<path>`)
+- **SI-05**: UI Dispatch & Seamless Window Restoration from Tray
+- **SI-06**: Strict Window Isolation: Zero `GDI+ Window` or `.NET-BroadcastEventWindow` leaks
+- **SI-07**: Targeted Win32 Fallback Ignores Runtime Helper Handles
+- **SI-08**: Rapid Consecutive Signals Burst Handling
+
+**Run Single-Instance Tests:**
+```cmd
+scripts\run_single_instance_tests.bat
+```
+Or via PowerShell:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_single_instance_tests.ps1
+```
+
+### 3. Tier 1 & Tier 2 End-to-End Suite (`scripts/run_tests.ps1`)
 - **Tier 1 (14 Engine Tests)**: Low-level cryptographic primitives, debouncing algorithms, single-instance mutex, and safe atomic disk flush.
 - **Tier 2 (9 UI Flows)**: Automated WinForms UI control from clean wipe through master password creation, CRUD, live filtering, clipboard copying, tray minimization, and IPC wake-up.
 

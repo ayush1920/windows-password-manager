@@ -36,21 +36,42 @@ namespace PasswordGui
                 {
                     // An instance is already running! Signal it to wake/restore and exit this process
                     bool maximize = false;
+                    string fileToOpen = null;
                     if (args != null && args.Length > 0)
                     {
-                        foreach (string arg in args)
+                        for (int i = 0; i < args.Length; i++)
                         {
-                            if (arg.Equals("--max", StringComparison.OrdinalIgnoreCase) ||
-                                arg.Equals("--maximize", StringComparison.OrdinalIgnoreCase))
+                            if (args[i].Equals("--max", StringComparison.OrdinalIgnoreCase) ||
+                                args[i].Equals("--maximize", StringComparison.OrdinalIgnoreCase))
                             {
                                 maximize = true;
-                                break;
+                            }
+                            else if ((args[i].Equals("-f", StringComparison.OrdinalIgnoreCase) ||
+                                      args[i].Equals("--file", StringComparison.OrdinalIgnoreCase) ||
+                                      args[i].Equals("--vault", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                            {
+                                fileToOpen = args[i + 1];
+                                i++;
+                            }
+                            else if (!args[i].StartsWith("-") && (args[i].EndsWith(".kcrypt", StringComparison.OrdinalIgnoreCase) || args[i].EndsWith(".txt", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                fileToOpen = args[i];
                             }
                         }
                     }
-                    SingleInstanceController.SignalRunningInstance(maximize);
+
+                    string signalMsg = maximize ? "RESTORE_MAXIMIZE" : "RESTORE";
+                    if (!string.IsNullOrEmpty(fileToOpen))
+                    {
+                        signalMsg += "|OPEN:" + fileToOpen;
+                    }
+
+                    SingleInstanceController.SignalRunningInstance(signalMsg);
                     return;
                 }
+
+                // Primary instance: start Named Pipe IPC server
+                SingleInstanceController.StartServer();
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -161,6 +182,7 @@ namespace PasswordGui
             }
             finally
             {
+                SingleInstanceController.StopServer();
                 if (singleInstanceMutex != null)
                 {
                     try

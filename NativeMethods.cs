@@ -47,8 +47,18 @@ namespace PasswordGui
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern int GetWindowTextLength(IntPtr hWnd);
+
         [DllImport("user32.dll", SetLastError = true)]
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindowVisible(IntPtr hWnd);
 
         public static void AllowMessageThroughUAC(uint messageId)
         {

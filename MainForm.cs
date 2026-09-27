@@ -598,6 +598,14 @@ namespace PasswordGui
             UpdateTitleAndVaultDisplay();
             LoadCredentials();
             this.ActiveControl = txtSearch;
+
+            SingleInstanceController.RegisterActiveForm(this);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            SingleInstanceController.UnregisterActiveForm(this);
+            base.OnFormClosed(e);
         }
 
         private void InitializeComponent()

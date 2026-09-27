@@ -60,6 +60,13 @@ namespace PasswordGui
             this.SelectedVaultPath = this.vaultFilePath;
 
             InitializeComponent();
+            SingleInstanceController.RegisterActiveForm(this);
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            SingleInstanceController.UnregisterActiveForm(this);
+            base.OnFormClosed(e);
         }
 
         private void InitializeComponent()
