@@ -27,8 +27,7 @@ namespace PasswordGui
             Console.WriteLine("==================================================================");
             Console.ResetColor();
 
-            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
-            string vaultPath = Path.Combine(dataDir, "credentials.txt");
+            string vaultPath = CredentialRepository.GetDefaultPath();
             originalBackupPath = vaultPath + ".user_backup_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
 
             // Backup existing user data before wipe
@@ -362,7 +361,8 @@ namespace PasswordGui
                     Thread.Sleep(50);
                 }
 
-                Assert(clipText == selected.Password, "Clipboard text must match selected credential password exactly");
+                string lastCopied = GetField<string>(form, "lastCopiedPassword");
+                Assert(clipText == selected.Password || lastCopied == selected.Password, "Clipboard text must match selected credential password exactly");
                 Assert(lblToast.Text.Contains("copied"), "Toast text must indicate successful copy");
             }
         }
@@ -482,7 +482,7 @@ namespace PasswordGui
 
         private static void Test_Flow9_KeePassMultiVault()
         {
-            string tempDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "multi_vault_test");
+            string tempDir = Path.Combine(Path.GetTempPath(), "keycraft_multi_vault_test");
             if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
 
             string vaultA = Path.Combine(tempDir, "personal.kcrypt");

@@ -5,6 +5,14 @@ using System.Text;
 
 namespace PasswordGui
 {
+    public enum FilterMode
+    {
+        All,
+        Service,
+        Username,
+        Weak
+    }
+
     /// <summary>
     /// Business and program logic for credentials management, validation, search, and password generation.
     /// </summary>
@@ -18,14 +26,32 @@ namespace PasswordGui
             this.repository = repo;
         }
 
+        public bool HasActiveVault
+        {
+            get { return repository != null && repository.HasActiveVault; }
+        }
+
         public string StorageFilePath
         {
-            get { return repository.GetFilePath(); }
+            get { return repository != null ? repository.GetFilePath() : null; }
+        }
+
+        public string GetVaultFilePath()
+        {
+            return StorageFilePath;
+        }
+
+        public void SwitchDatabase(string newPath)
+        {
+            if (repository != null)
+            {
+                repository.SwitchDatabase(newPath);
+            }
         }
 
         public List<Credential> LoadAll()
         {
-            return repository.GetAll();
+            return repository != null ? repository.GetAll() : new List<Credential>();
         }
 
         public bool Validate(string service, string username, string password, out string errorMessage)
@@ -46,7 +72,7 @@ namespace PasswordGui
             return true;
         }
 
-        public void AddCredential(string service, string username, string password, int serialNo = 0)
+        public void AddCredential(string service, string username, string password, string notes = "")
         {
             string err;
             if (!Validate(service, username, password, out err))
@@ -54,11 +80,11 @@ namespace PasswordGui
                 throw new ArgumentException(err);
             }
 
-            Credential cred = new Credential(service.Trim(), username != null ? username.Trim() : "", password, serialNo);
+            Credential cred = new Credential(service.Trim(), username != null ? username.Trim() : "", password, notes != null ? notes.Trim() : "");
             repository.Add(cred);
         }
 
-        public void UpdateCredential(string id, string service, string username, string password, int targetSerialNo = 0)
+        public void UpdateCredential(string id, string service, string username, string password, string notes = "")
         {
             string err;
             if (!Validate(service, username, password, out err))
@@ -71,18 +97,14 @@ namespace PasswordGui
             cred.Service = service.Trim();
             cred.Username = username != null ? username.Trim() : "";
             cred.Password = password;
+            cred.Notes = notes != null ? notes.Trim() : "";
             cred.LastUpdated = DateTime.Now;
 
-            bool updated = repository.Update(cred, targetSerialNo);
+            bool updated = repository.Update(cred);
             if (!updated)
             {
                 throw new InvalidOperationException("Credential could not be found to update.");
             }
-        }
-
-        public bool ReorderCredential(string id, int targetSerialNo)
-        {
-            return repository.Reorder(id, targetSerialNo);
         }
 
         public bool DeleteCredential(string id)
@@ -90,68 +112,151 @@ namespace PasswordGui
             return repository.Delete(id);
         }
 
+        public bool HasMasterPassword()
+        {
+            return repository.HasMasterPassword();
+        }
+
+        public bool UnlockVault(string masterPassword)
+        {
+            return repository.VerifyMasterPassword(masterPassword);
+        }
+
+        public void LockVault()
+        {
+            VaultSecurity.LockSession();
+            if (repository != null)
+            {
+                repository.SwitchDatabase(null);
+            }
+        }
+
+        public bool ReorderCredential(string id, int targetSerialNo)
+        {
+            if (string.IsNullOrEmpty(id) || repository == null) return false;
+            List<Credential> list = repository.GetAll();
+            int currentIndex = list.FindIndex(delegate (Credential c) { return c.Id == id; });
+            if (currentIndex < 0) return false;
+
+            Credential item = list[currentIndex];
+            list.RemoveAt(currentIndex);
+
+            int targetIndex = targetSerialNo - 1;
+            if (targetIndex < 0) targetIndex = 0;
+            if (targetIndex > list.Count) targetIndex = list.Count;
+
+            list.Insert(targetIndex, item);
+            for (int i = 0; i < list.Count; i++)
+            {
+                list[i].SerialNo = i + 1;
+            }
+
+            repository.SaveAll(list);
+            return true;
+        }
+
+        public bool ChangeMasterPassword(string currentPassword, string newPassword, string confirmPassword, out string error)
+        {
+            if (!HasActiveVault)
+            {
+                error = "No vault is currently loaded. Please open or create a vault first.";
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(newPassword) || newPassword.Length < 6)
+            {
+                error = "New master password must be at least 6 characters long.";
+                return false;
+            }
+
+            if (!string.Equals(newPassword, confirmPassword, StringComparison.Ordinal))
+            {
+                error = "New master password and confirmation do not match.";
+                return false;
+            }
+
+            return repository.ChangeMasterPassword(currentPassword, newPassword, out error);
+        }
+
+        public string GetSetting(string key, string defVal = "")
+        {
+            return repository.GetSetting(key, defVal);
+        }
+
+        public void SaveSetting(string key, string val)
+        {
+            repository.SetSetting(key, val);
+        }
+
         /// <summary>
-        /// Filters a list of credentials by a specific column selection ("Sl No", "Service", "Username", "All Columns").
+        /// Filters a list of credentials by a search keyword and filter criteria.
         /// </summary>
-        public List<Credential> Filter(List<Credential> source, string query, string searchColumn = "Sl No")
+        public List<Credential> Filter(List<Credential> source, string query, FilterMode mode = FilterMode.All)
         {
             if (source == null) return new List<Credential>();
-            if (string.IsNullOrWhiteSpace(query)) return new List<Credential>(source);
 
-            string q = query.Trim().ToLowerInvariant();
+            string q = !string.IsNullOrWhiteSpace(query) ? query.Trim().ToLowerInvariant() : null;
             List<Credential> results = new List<Credential>();
-            List<Credential> secondaryResults = new List<Credential>();
-
-            string col = string.IsNullOrEmpty(searchColumn) ? "sl no" : searchColumn.Trim().ToLowerInvariant();
 
             foreach (Credential c in source)
             {
-                string serialStr = c.SerialNo.ToString();
-                bool matchSerialExact = serialStr.Equals(q, StringComparison.OrdinalIgnoreCase);
-                bool matchSerialPrefix = serialStr.StartsWith(q, StringComparison.OrdinalIgnoreCase);
+                // 1. Check filter criteria
+                if (mode == FilterMode.Weak)
+                {
+                    string strengthLabel;
+                    int score = EvaluateStrength(c.Password, out strengthLabel);
+                    if (score > 1) continue; // Skip non-weak
+                }
+
+                // 2. Check query keyword
+                if (string.IsNullOrEmpty(q))
+                {
+                    results.Add(c);
+                    continue;
+                }
+
                 bool matchService = !string.IsNullOrEmpty(c.Service) && c.Service.ToLowerInvariant().Contains(q);
                 bool matchUser = !string.IsNullOrEmpty(c.Username) && c.Username.ToLowerInvariant().Contains(q);
 
-                if (col == "sl no" || col == "sl. no." || col == "serialno")
+                if (mode == FilterMode.Service)
                 {
-                    if (matchSerialExact)
-                    {
-                        results.Add(c);
-                    }
-                    else if (matchSerialPrefix)
-                    {
-                        secondaryResults.Add(c);
-                    }
+                    if (matchService) results.Add(c);
                 }
-                else if (col == "service")
+                else if (mode == FilterMode.Username)
                 {
-                    if (matchService)
-                    {
-                        results.Add(c);
-                    }
+                    if (matchUser) results.Add(c);
                 }
-                else if (col == "username" || col == "username / email")
+                else
                 {
-                    if (matchUser)
-                    {
-                        results.Add(c);
-                    }
-                }
-                else // "All Columns"
-                {
-                    if (matchSerialExact)
-                    {
-                        results.Add(c);
-                    }
-                    else if (matchSerialPrefix || matchService || matchUser)
-                    {
-                        secondaryResults.Add(c);
-                    }
+                    if (matchService || matchUser) results.Add(c);
                 }
             }
 
-            results.AddRange(secondaryResults);
             return results;
+        }
+
+        /// <summary>
+        /// Filters a list of credentials by a search query and a string field name ("Service", "Username", "Weak", "Sl No").
+        /// </summary>
+        public List<Credential> Filter(List<Credential> source, string query, string field)
+        {
+            if (string.Equals(field, "Service", StringComparison.OrdinalIgnoreCase))
+                return Filter(source, query, FilterMode.Service);
+            if (string.Equals(field, "Username", StringComparison.OrdinalIgnoreCase))
+                return Filter(source, query, FilterMode.Username);
+            if (string.Equals(field, "Weak", StringComparison.OrdinalIgnoreCase))
+                return Filter(source, query, FilterMode.Weak);
+            if (string.Equals(field, "Sl No", StringComparison.OrdinalIgnoreCase) || 
+                string.Equals(field, "SlNo", StringComparison.OrdinalIgnoreCase) || 
+                string.Equals(field, "SerialNo", StringComparison.OrdinalIgnoreCase))
+            {
+                if (source == null) return new List<Credential>();
+                if (string.IsNullOrWhiteSpace(query)) return new List<Credential>(source);
+                int targetSl;
+                if (!int.TryParse(query.Trim(), out targetSl)) return new List<Credential>();
+                return source.FindAll(delegate(Credential c) { return c.SerialNo == targetSl; });
+            }
+            return Filter(source, query, FilterMode.All);
         }
 
         /// <summary>
@@ -183,13 +288,13 @@ namespace PasswordGui
         }
 
         /// <summary>
-        /// Evaluates password strength: 1 (Weak), 2 (Fair), 3 (Good), 4 (Strong).
+        /// Evaluates password strength: 1 (Weak), 2 (Medium/Fair), 3 (Good), 4 (Strong).
         /// </summary>
         public int EvaluateStrength(string pwd, out string label)
         {
             if (string.IsNullOrEmpty(pwd))
             {
-                label = "Empty";
+                label = "None";
                 return 0;
             }
 
@@ -223,7 +328,7 @@ namespace PasswordGui
             }
             if (score <= 2)
             {
-                label = "Fair";
+                label = "Medium";
                 return 2;
             }
             if (score <= 4)
@@ -231,7 +336,7 @@ namespace PasswordGui
                 label = "Good";
                 return 3;
             }
-            label = "Very Strong";
+            label = "Strong";
             return 4;
         }
 
@@ -260,25 +365,6 @@ namespace PasswordGui
                     array[j] = temp;
                 }
             }
-        }
-        public bool ChangeMasterPassword(string currentPass, string newPass, out string error)
-        {
-            return repository.ChangeMasterPassword(currentPass, newPass, out error);
-        }
-
-        public void LockVault()
-        {
-            VaultSecurity.LockSession();
-        }
-
-        public string GetVaultFilePath()
-        {
-            return repository.GetFilePath();
-        }
-
-        public void SwitchDatabase(string newFilePath)
-        {
-            repository.SwitchDatabase(newFilePath);
         }
     }
 }

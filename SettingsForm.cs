@@ -1,595 +1,71 @@
 using System;
 using System.Drawing;
-using System.IO;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace PasswordGui
 {
     /// <summary>
-    /// Dedicated Security & Settings Panel for KeyCraft.
-    /// Manages Master Password updates, database re-encryption, vault security status,
-    /// and immediate vault locking.
+    /// Screen 3: Security & Settings (KeyCraft — Security & Settings).
+    /// Authentic Windows 11 WinUI 3 Dialog Modal directly replicating Stitch Screen 3
+    /// with refined spacing, custom Fluent dark scroll bar, and non-cluttered user options.
     /// </summary>
     public class SettingsForm : Form
     {
         private readonly CredentialService service;
+        private readonly AppSettings settings;
 
-        // Visual Palette (Obsidian Theme)
-        private static readonly Color ColorBgApp = Color.FromArgb(15, 17, 23);
-        private static readonly Color ColorBgCard = Color.FromArgb(20, 24, 33);
-        private static readonly Color ColorBorder = Color.FromArgb(37, 44, 65);
-        private static readonly Color ColorPrimary = Color.FromArgb(99, 102, 241);
-        private static readonly Color ColorPrimaryHover = Color.FromArgb(129, 140, 248);
-        private static readonly Color ColorTextPrimary = Color.FromArgb(243, 244, 246);
-        private static readonly Color ColorTextMuted = Color.FromArgb(156, 163, 175);
-        private static readonly Color ColorDanger = Color.FromArgb(239, 68, 68);
-        private static readonly Color ColorSuccess = Color.FromArgb(34, 197, 94);
+        // Custom Title Bar
+        private Panel panelTitleBar;
+        private TitleBarButton btnMin;
+        private TitleBarButton btnClose;
 
-        // UI Controls
+        // Viewport & Custom Scroll
+        private Panel panelViewport;
+        private Panel panelContent;
+        private DarkScrollBar customScrollBar;
+
+        // Fields
+        private TextBox txtCurrentPwd;
+        private TextBox txtNewPwd;
+        private TextBox txtConfirmPwd;
+        private Label lblPwdStatus;
+        private Panel pnlStrengthBar;
+        private int newPwdStrengthScore = 0;
+
+        // Password aliases
         private TextBox txtCurrentPass;
         private TextBox txtNewPass;
         private TextBox txtConfirmPass;
-        private Panel strengthBar;
-        private Label lblStrength;
         private Label lblMessage;
-        private bool isCurrentRevealed = false;
-        private bool isNewRevealed = false;
 
-        // Settings & Hotkey Controls
-        private readonly AppSettings appSettings;
-        private CheckBox chkStartup;
-        private CheckBox chkCloseToTray;
-        private CheckBox chkEnableHotkey;
+        // Settings checkboxes
+        private WinCheckbox chkHotkey;
+        private WinCheckbox chkEnableHotkey;
+        private WinCheckbox chkStartLogin;
+        private WinCheckbox chkStartup;
+        private WinCheckbox chkMinimizeTray;
+        private WinCheckbox chkCloseToTray;
+
+        // Hotkey picker control
         private HotkeyPickerControl pickerHotkey;
-        private Label lblHotkeyStatus;
-        private Label lblPrefsMessage;
 
-        public event EventHandler VaultLockRequested;
+#pragma warning disable 0067
+        // Public events
+        public event EventHandler RequestLockVault;
         public event EventHandler SettingsSaved;
+#pragma warning restore 0067
 
-        public SettingsForm(CredentialService service, AppSettings settings = null)
+        private void UpdateNewPasswordStrength(string pwd)
         {
-            this.service = service;
-            this.appSettings = settings ?? AppSettings.Load();
-            InitializeComponent();
-        }
-
-        private void InitializeComponent()
-        {
-            this.FormBorderStyle = FormBorderStyle.None;
-            this.StartPosition = FormStartPosition.CenterParent;
-            this.BackColor = ColorBgApp;
-            this.ForeColor = ColorTextPrimary;
-            this.Font = new Font("Segoe UI", 9.5f);
-            this.Size = new Size(600, 740);
-            this.KeyPreview = true;
-
-            // Border painting
-            this.Paint += delegate(object sender, PaintEventArgs e)
-            {
-                using (Pen borderPen = new Pen(ColorBorder, 1f))
-                {
-                    e.Graphics.DrawRectangle(borderPen, 0, 0, this.Width - 1, this.Height - 1);
-                }
-            };
-
-            // Custom Title Drag Bar
-            Panel titleBar = new Panel();
-            titleBar.Dock = DockStyle.Top;
-            titleBar.Height = 40;
-            titleBar.BackColor = Color.FromArgb(12, 14, 19);
-            titleBar.MouseDown += delegate(object s, MouseEventArgs e)
-            {
-                if (e.Button == MouseButtons.Left)
-                {
-                    ReleaseCapture();
-                    SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-                }
-            };
-
-            // Gear Icon
-            Panel iconPanel = new Panel();
-            iconPanel.Location = new Point(14, 12);
-            iconPanel.Size = new Size(16, 16);
-            iconPanel.BackColor = Color.Transparent;
-            iconPanel.Paint += delegate(object s, PaintEventArgs pe)
-            {
-                Bitmap bmp = IconResources.GetIcon("settings");
-                if (bmp != null)
-                {
-                    IconHelper.DrawTintedIcon(pe.Graphics, bmp, new Rectangle(0, 0, 16, 16), ColorPrimaryHover);
-                }
-            };
-            titleBar.Controls.Add(iconPanel);
-
-            Label lblTitle = new Label();
-            lblTitle.Text = "KeyCraft — Security & Settings";
-            lblTitle.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-            lblTitle.ForeColor = ColorTextMuted;
-            lblTitle.UseMnemonic = false;
-            lblTitle.Location = new Point(38, 11);
-            lblTitle.AutoSize = true;
-            lblTitle.MouseDown += delegate(object s, MouseEventArgs e)
-            {
-                if (e.Button == MouseButtons.Left)
-                {
-                    ReleaseCapture();
-                    SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-                }
-            };
-            titleBar.Controls.Add(lblTitle);
-
-            // Close button
-            Button btnClose = new Button();
-            btnClose.Text = "✕";
-            btnClose.Dock = DockStyle.Right;
-            btnClose.Width = 44;
-            btnClose.FlatStyle = FlatStyle.Flat;
-            btnClose.FlatAppearance.BorderSize = 0;
-            btnClose.ForeColor = ColorTextMuted;
-            btnClose.BackColor = Color.Transparent;
-            btnClose.Cursor = Cursors.Hand;
-            btnClose.Click += delegate { this.Close(); };
-            titleBar.Controls.Add(btnClose);
-
-            this.Controls.Add(titleBar);
-
-            // Scrollable Content Container
-            Panel scrollPanel = new Panel();
-            scrollPanel.Dock = DockStyle.Fill;
-            scrollPanel.AutoScroll = true;
-            scrollPanel.Padding = new Padding(24, 16, 24, 16);
-            this.Controls.Add(scrollPanel);
-            scrollPanel.BringToFront();
-
-            int curY = 10;
-
-            // SECTION 1: MASTER PASSWORD MANAGEMENT CARD
-            Panel cardMaster = CreateSectionCard(scrollPanel.Width - 48, 290);
-            cardMaster.Location = new Point(24, curY);
-
-            Label lblCardTitle = new Label();
-            lblCardTitle.Text = "Master Password Management";
-            lblCardTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblCardTitle.ForeColor = ColorTextPrimary;
-            lblCardTitle.Location = new Point(16, 14);
-            lblCardTitle.AutoSize = true;
-            cardMaster.Controls.Add(lblCardTitle);
-
-            Label lblCardDesc = new Label();
-            lblCardDesc.Text = "Change the master password used to derive AES-256 keys and re-encrypt your database.";
-            lblCardDesc.Font = new Font("Segoe UI", 8.5f);
-            lblCardDesc.ForeColor = ColorTextMuted;
-            lblCardDesc.Location = new Point(16, 38);
-            lblCardDesc.Size = new Size(cardMaster.Width - 32, 38);
-            cardMaster.Controls.Add(lblCardDesc);
-
-            int passY = 78;
-
-            // 1. Current Master Password
-            Label lblCurr = new Label();
-            lblCurr.Text = "CURRENT MASTER PASSWORD";
-            lblCurr.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-            lblCurr.ForeColor = ColorTextMuted;
-            lblCurr.Location = new Point(16, passY);
-            lblCurr.AutoSize = true;
-            cardMaster.Controls.Add(lblCurr);
-            passY += 18;
-
-            Panel currContainer = CreateInputContainer(cardMaster.Width - 32, 34);
-            currContainer.Location = new Point(16, passY);
-            txtCurrentPass = CreateInnerTextBox(currContainer.Width - 44);
-            currContainer.Controls.Add(txtCurrentPass);
-            Button btnToggleCurr = CreateEyeToggle(delegate
-            {
-                isCurrentRevealed = !isCurrentRevealed;
-                txtCurrentPass.PasswordChar = isCurrentRevealed ? '\0' : '●';
-            });
-            currContainer.Controls.Add(btnToggleCurr);
-            cardMaster.Controls.Add(currContainer);
-            passY += 40;
-
-            // 2. New Master Password
-            Label lblNew = new Label();
-            lblNew.Text = "NEW MASTER PASSWORD";
-            lblNew.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-            lblNew.ForeColor = ColorTextMuted;
-            lblNew.Location = new Point(16, passY);
-            lblNew.AutoSize = true;
-            cardMaster.Controls.Add(lblNew);
-            passY += 18;
-
-            Panel newContainer = CreateInputContainer(cardMaster.Width - 32, 34);
-            newContainer.Location = new Point(16, passY);
-            txtNewPass = CreateInnerTextBox(newContainer.Width - 44);
-            txtNewPass.TextChanged += delegate { UpdateStrength(); };
-            newContainer.Controls.Add(txtNewPass);
-            Button btnToggleNew = CreateEyeToggle(delegate
-            {
-                isNewRevealed = !isNewRevealed;
-                txtNewPass.PasswordChar = isNewRevealed ? '\0' : '●';
-            });
-            newContainer.Controls.Add(btnToggleNew);
-            cardMaster.Controls.Add(newContainer);
-            passY += 38;
-
-            // Strength bar
-            strengthBar = new Panel();
-            strengthBar.Location = new Point(16, passY + 5);
-            strengthBar.Size = new Size(160, 4);
-            strengthBar.BackColor = Color.FromArgb(37, 44, 65);
-            cardMaster.Controls.Add(strengthBar);
-
-            lblStrength = new Label();
-            lblStrength.Location = new Point(184, passY);
-            lblStrength.Size = new Size(160, 16);
-            lblStrength.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-            lblStrength.ForeColor = ColorTextMuted;
-            lblStrength.Text = "Strength: None";
-            cardMaster.Controls.Add(lblStrength);
-            passY += 22;
-
-            // 3. Confirm New Password
-            Label lblConf = new Label();
-            lblConf.Text = "CONFIRM NEW PASSWORD";
-            lblConf.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
-            lblConf.ForeColor = ColorTextMuted;
-            lblConf.Location = new Point(16, passY);
-            lblConf.AutoSize = true;
-            cardMaster.Controls.Add(lblConf);
-            passY += 18;
-
-            Panel confContainer = CreateInputContainer(cardMaster.Width - 32, 34);
-            confContainer.Location = new Point(16, passY);
-            txtConfirmPass = CreateInnerTextBox(confContainer.Width - 16);
-            confContainer.Controls.Add(txtConfirmPass);
-            cardMaster.Controls.Add(confContainer);
-            passY += 42;
-
-            // Action Button & Feedback Label
-            Button btnChangePass = new Button();
-            btnChangePass.Text = "Update Master Password";
-            btnChangePass.Location = new Point(16, passY);
-            btnChangePass.Size = new Size(230, 36);
-            btnChangePass.FlatStyle = FlatStyle.Flat;
-            btnChangePass.FlatAppearance.BorderSize = 0;
-            btnChangePass.BackColor = ColorPrimary;
-            btnChangePass.ForeColor = Color.White;
-            btnChangePass.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            btnChangePass.Cursor = Cursors.Hand;
-            btnChangePass.Click += delegate { HandleChangePassword(); };
-            cardMaster.Controls.Add(btnChangePass);
-
-            lblMessage = new Label();
-            lblMessage.Location = new Point(256, passY + 8);
-            lblMessage.Size = new Size(cardMaster.Width - 266, 32);
-            lblMessage.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            lblMessage.Visible = false;
-            cardMaster.Controls.Add(lblMessage);
-
-            cardMaster.Height = passY + 52;
-            scrollPanel.Controls.Add(cardMaster);
-            curY += cardMaster.Height + 16;
-
-            // SECTION 2: GLOBAL ACTIVATION SHORTCUT (PowerToys Style)
-            Panel cardHotkey = CreateSectionCard(scrollPanel.Width - 48, 195);
-            cardHotkey.Location = new Point(24, curY);
-
-            Label lblHotkeyTitle = new Label();
-            lblHotkeyTitle.Text = "Global Activation Shortcut";
-            lblHotkeyTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblHotkeyTitle.ForeColor = ColorTextPrimary;
-            lblHotkeyTitle.Location = new Point(16, 14);
-            lblHotkeyTitle.AutoSize = true;
-            cardHotkey.Controls.Add(lblHotkeyTitle);
-
-            Label lblHotkeyDesc = new Label();
-            lblHotkeyDesc.Text = "Press this shortcut from anywhere in Windows to restore KeyCraft from the tray and focus search.";
-            lblHotkeyDesc.Font = new Font("Segoe UI", 8.5f);
-            lblHotkeyDesc.ForeColor = ColorTextMuted;
-            lblHotkeyDesc.Location = new Point(16, 38);
-            lblHotkeyDesc.Size = new Size(cardHotkey.Width - 32, 28);
-            cardHotkey.Controls.Add(lblHotkeyDesc);
-
-            chkEnableHotkey = new CheckBox();
-            chkEnableHotkey.Text = "Enable System-Wide Global Hotkey";
-            chkEnableHotkey.Font = new Font("Segoe UI", 9f, FontStyle.Bold);
-            chkEnableHotkey.ForeColor = ColorTextPrimary;
-            chkEnableHotkey.Location = new Point(16, 68);
-            chkEnableHotkey.AutoSize = true;
-            chkEnableHotkey.Checked = appSettings.HotkeyEnabled;
-            chkEnableHotkey.CheckedChanged += delegate { UpdateHotkeyStatus(); };
-            cardHotkey.Controls.Add(chkEnableHotkey);
-
-            pickerHotkey = new HotkeyPickerControl();
-            pickerHotkey.Location = new Point(16, 96);
-            pickerHotkey.Size = new Size(320, 38);
-            pickerHotkey.SetHotkey(appSettings.HotkeyModifiers, appSettings.HotkeyKey);
-            pickerHotkey.HotkeyChanged += delegate { UpdateHotkeyStatus(); };
-            cardHotkey.Controls.Add(pickerHotkey);
-
-            Button btnResetHotkey = new Button();
-            btnResetHotkey.Text = "Reset";
-            btnResetHotkey.Location = new Point(344, 96);
-            btnResetHotkey.Size = new Size(65, 38);
-            btnResetHotkey.FlatStyle = FlatStyle.Flat;
-            btnResetHotkey.FlatAppearance.BorderColor = ColorBorder;
-            btnResetHotkey.BackColor = Color.FromArgb(24, 30, 46);
-            btnResetHotkey.ForeColor = ColorTextPrimary;
-            btnResetHotkey.Font = new Font("Segoe UI", 8.5f);
-            btnResetHotkey.Cursor = Cursors.Hand;
-            btnResetHotkey.Click += delegate
-            {
-                pickerHotkey.SetHotkey(GlobalHotkeyManager.MOD_CONTROL | GlobalHotkeyManager.MOD_ALT, Keys.K);
-                UpdateHotkeyStatus();
-            };
-            cardHotkey.Controls.Add(btnResetHotkey);
-
-            Button btnSaveHotkey = new Button();
-            btnSaveHotkey.Text = "Apply Hotkey";
-            btnSaveHotkey.Location = new Point(416, 96);
-            btnSaveHotkey.Size = new Size(110, 38);
-            btnSaveHotkey.FlatStyle = FlatStyle.Flat;
-            btnSaveHotkey.FlatAppearance.BorderSize = 0;
-            btnSaveHotkey.BackColor = ColorPrimary;
-            btnSaveHotkey.ForeColor = Color.White;
-            btnSaveHotkey.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            btnSaveHotkey.Cursor = Cursors.Hand;
-            btnSaveHotkey.Click += delegate { HandleSaveHotkey(); };
-            cardHotkey.Controls.Add(btnSaveHotkey);
-
-            lblHotkeyStatus = new Label();
-            lblHotkeyStatus.Location = new Point(16, 142);
-            lblHotkeyStatus.Size = new Size(cardHotkey.Width - 32, 44);
-            lblHotkeyStatus.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            lblHotkeyStatus.UseMnemonic = false;
-            cardHotkey.Controls.Add(lblHotkeyStatus);
-
-            UpdateHotkeyStatus();
-
-            cardHotkey.Height = 195;
-            scrollPanel.Controls.Add(cardHotkey);
-            curY += cardHotkey.Height + 16;
-
-            // SECTION 3: APPLICATION BEHAVIOR & STARTUP
-            Panel cardBehavior = CreateSectionCard(scrollPanel.Width - 48, 175);
-            cardBehavior.Location = new Point(24, curY);
-
-            Label lblBehaviorTitle = new Label();
-            lblBehaviorTitle.Text = "Application Behavior & Startup";
-            lblBehaviorTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblBehaviorTitle.ForeColor = ColorTextPrimary;
-            lblBehaviorTitle.UseMnemonic = false;
-            lblBehaviorTitle.Location = new Point(16, 14);
-            lblBehaviorTitle.AutoSize = true;
-            cardBehavior.Controls.Add(lblBehaviorTitle);
-
-            Label lblBehaviorDesc = new Label();
-            lblBehaviorDesc.Text = "Configure system startup integration and window title bar close behavior.";
-            lblBehaviorDesc.Font = new Font("Segoe UI", 8.5f);
-            lblBehaviorDesc.ForeColor = ColorTextMuted;
-            lblBehaviorDesc.Location = new Point(16, 38);
-            lblBehaviorDesc.Size = new Size(cardBehavior.Width - 32, 24);
-            cardBehavior.Controls.Add(lblBehaviorDesc);
-
-            chkStartup = new CheckBox();
-            chkStartup.Text = "Start KeyCraft on Windows login (run silently in system tray)";
-            chkStartup.Font = new Font("Segoe UI", 9f);
-            chkStartup.ForeColor = ColorTextPrimary;
-            chkStartup.Location = new Point(16, 68);
-            chkStartup.Size = new Size(cardBehavior.Width - 32, 24);
-            chkStartup.Checked = appSettings.RunOnStartup;
-            cardBehavior.Controls.Add(chkStartup);
-
-            chkCloseToTray = new CheckBox();
-            chkCloseToTray.Text = "Close button (✕) minimizes to system tray instead of quitting";
-            chkCloseToTray.Font = new Font("Segoe UI", 9f);
-            chkCloseToTray.ForeColor = ColorTextPrimary;
-            chkCloseToTray.Location = new Point(16, 96);
-            chkCloseToTray.Size = new Size(cardBehavior.Width - 32, 24);
-            chkCloseToTray.Checked = appSettings.CloseToTray;
-            cardBehavior.Controls.Add(chkCloseToTray);
-
-            Button btnSavePrefs = new Button();
-            btnSavePrefs.Text = "Save Behavior Preferences";
-            btnSavePrefs.Location = new Point(16, 128);
-            btnSavePrefs.Size = new Size(200, 34);
-            btnSavePrefs.FlatStyle = FlatStyle.Flat;
-            btnSavePrefs.FlatAppearance.BorderSize = 0;
-            btnSavePrefs.BackColor = ColorPrimary;
-            btnSavePrefs.ForeColor = Color.White;
-            btnSavePrefs.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            btnSavePrefs.Cursor = Cursors.Hand;
-            btnSavePrefs.Click += delegate { HandleSaveBehavior(); };
-            cardBehavior.Controls.Add(btnSavePrefs);
-
-            lblPrefsMessage = new Label();
-            lblPrefsMessage.Location = new Point(226, 134);
-            lblPrefsMessage.Size = new Size(cardBehavior.Width - 236, 24);
-            lblPrefsMessage.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            lblPrefsMessage.Visible = false;
-            cardBehavior.Controls.Add(lblPrefsMessage);
-
-            cardBehavior.Height = 175;
-            scrollPanel.Controls.Add(cardBehavior);
-            curY += cardBehavior.Height + 16;
-
-            // SECTION 4: SECURITY & VAULT STATUS CARD
-            Panel cardStatus = CreateSectionCard(scrollPanel.Width - 48, 140);
-            cardStatus.Location = new Point(24, curY);
-
-            Label lblStatusTitle = new Label();
-            lblStatusTitle.Text = "Encryption & Vault Security";
-            lblStatusTitle.Font = new Font("Segoe UI", 11.5f, FontStyle.Bold);
-            lblStatusTitle.ForeColor = ColorTextPrimary;
-            lblStatusTitle.UseMnemonic = false;
-            lblStatusTitle.Location = new Point(16, 14);
-            lblStatusTitle.AutoSize = true;
-            cardStatus.Controls.Add(lblStatusTitle);
-
-            int infoY = 44;
-            AddStatusRow(cardStatus, "Cipher Algorithm:", "AES-256-CBC (PKCS7)", infoY);
-            infoY += 24;
-            AddStatusRow(cardStatus, "Key Derivation:", "PBKDF2 HMAC-SHA1 (100,000 iterations)", infoY);
-            infoY += 24;
-            AddStatusRow(cardStatus, "Data Integrity:", "HMAC-SHA256 Constant-Time Token", infoY);
-            infoY += 24;
-            AddStatusRow(cardStatus, "Vault Status:", "● Active & Process-Locked", infoY, ColorSuccess);
-
-            cardStatus.Height = infoY + 28;
-            scrollPanel.Controls.Add(cardStatus);
-            curY += cardStatus.Height + 16;
-
-            // SECTION 3: SESSION ACTIONS
-            Panel cardActions = CreateSectionCard(scrollPanel.Width - 48, 70);
-            cardActions.Location = new Point(24, curY);
-
-            Button btnLock = new Button();
-            btnLock.Text = "       Lock Vault Now";
-            btnLock.Location = new Point(16, 16);
-            btnLock.Size = new Size(180, 36);
-            btnLock.FlatStyle = FlatStyle.Flat;
-            btnLock.FlatAppearance.BorderSize = 0;
-            btnLock.BackColor = Color.FromArgb(220, 38, 38);
-            btnLock.ForeColor = Color.White;
-            btnLock.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
-            btnLock.Cursor = Cursors.Hand;
-            btnLock.Paint += delegate(object s, PaintEventArgs pe)
-            {
-                Bitmap lockBmp = IconResources.GetIcon("lock");
-                if (lockBmp != null)
-                {
-                    IconHelper.DrawTintedIcon(pe.Graphics, lockBmp, new Rectangle(14, 10, 16, 16), Color.White);
-                }
-            };
-            btnLock.Click += delegate
-            {
-                if (VaultLockRequested != null)
-                {
-                    this.Close();
-                    VaultLockRequested(this, EventArgs.Empty);
-                }
-            };
-            cardActions.Controls.Add(btnLock);
-
-            Button btnDone = new Button();
-            btnDone.Text = "Done / Close";
-            btnDone.Location = new Point(208, 16);
-            btnDone.Size = new Size(120, 36);
-            btnDone.FlatStyle = FlatStyle.Flat;
-            btnDone.FlatAppearance.BorderColor = ColorBorder;
-            btnDone.BackColor = Color.FromArgb(24, 30, 46);
-            btnDone.ForeColor = ColorTextPrimary;
-            btnDone.Font = new Font("Segoe UI", 9f);
-            btnDone.Cursor = Cursors.Hand;
-            btnDone.Click += delegate { this.Close(); };
-            cardActions.Controls.Add(btnDone);
-
-            scrollPanel.Controls.Add(cardActions);
-        }
-
-        private void AddStatusRow(Panel parent, string label, string value, int y, Color? valColor = null)
-        {
-            Label lbl = new Label();
-            lbl.Text = label;
-            lbl.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
-            lbl.ForeColor = ColorTextMuted;
-            lbl.UseMnemonic = false;
-            lbl.Location = new Point(16, y);
-            lbl.Size = new Size(130, 20);
-            parent.Controls.Add(lbl);
-
-            Label val = new Label();
-            val.Text = value;
-            val.Font = new Font("Segoe UI", 8.5f);
-            val.ForeColor = valColor ?? ColorTextPrimary;
-            val.UseMnemonic = false;
-            val.Location = new Point(150, y);
-            val.AutoSize = true;
-            parent.Controls.Add(val);
-        }
-
-        private Panel CreateSectionCard(int width, int height)
-        {
-            Panel p = new Panel();
-            p.Size = new Size(width, height);
-            p.BackColor = ColorBgCard;
-            p.Paint += delegate(object s, PaintEventArgs pe)
-            {
-                using (Pen pen = new Pen(ColorBorder, 1f))
-                {
-                    pe.Graphics.DrawRectangle(pen, 0, 0, p.Width - 1, p.Height - 1);
-                }
-            };
-            return p;
-        }
-
-        private Panel CreateInputContainer(int width, int height)
-        {
-            Panel p = new Panel();
-            p.Size = new Size(width, height);
-            p.BackColor = Color.FromArgb(17, 24, 39);
-            p.Paint += delegate(object s, PaintEventArgs pe)
-            {
-                using (Pen pen = new Pen(ColorBorder, 1f))
-                {
-                    pe.Graphics.DrawRectangle(pen, 0, 0, p.Width - 1, p.Height - 1);
-                }
-            };
-            return p;
-        }
-
-        private TextBox CreateInnerTextBox(int width)
-        {
-            TextBox tb = new TextBox();
-            tb.BorderStyle = BorderStyle.None;
-            tb.BackColor = Color.FromArgb(17, 24, 39);
-            tb.ForeColor = ColorTextPrimary;
-            tb.Font = new Font("Segoe UI", 10f);
-            tb.Location = new Point(8, 7);
-            tb.Width = width;
-            tb.PasswordChar = '●';
-            return tb;
-        }
-
-        private Button CreateEyeToggle(Action onToggle)
-        {
-            Button btn = new Button();
-            btn.Dock = DockStyle.Right;
-            btn.Width = 32;
-            btn.FlatStyle = FlatStyle.Flat;
-            btn.FlatAppearance.BorderSize = 0;
-            btn.BackColor = Color.Transparent;
-            btn.Cursor = Cursors.Hand;
-            bool revealed = false;
-            btn.Paint += delegate(object s, PaintEventArgs pe)
-            {
-                Bitmap bmp = IconResources.GetIcon(revealed ? "eye_off" : "eye");
-                if (bmp != null)
-                {
-                    IconHelper.DrawTintedIcon(pe.Graphics, bmp, new Rectangle(8, 9, 16, 16), ColorTextMuted);
-                }
-            };
-            btn.Click += delegate
-            {
-                revealed = !revealed;
-                if (onToggle != null) onToggle();
-                btn.Invalidate();
-            };
-            return btn;
-        }
-
-        private void UpdateStrength()
-        {
-            if (strengthBar == null || lblStrength == null) return;
-            string pwd = txtNewPass.Text;
-
             if (string.IsNullOrEmpty(pwd))
             {
-                strengthBar.BackColor = Color.FromArgb(37, 44, 65);
-                strengthBar.Width = 30;
-                lblStrength.Text = "Strength: None";
-                lblStrength.ForeColor = ColorTextMuted;
+                newPwdStrengthScore = 0;
+                if (lblPwdStatus != null)
+                {
+                    lblPwdStatus.Text = "None";
+                    lblPwdStatus.ForeColor = WinColors.TextMuted;
+                }
                 return;
             }
 
@@ -600,131 +76,641 @@ namespace PasswordGui
             if (System.Text.RegularExpressions.Regex.IsMatch(pwd, @"[0-9]")) score++;
             if (System.Text.RegularExpressions.Regex.IsMatch(pwd, @"[^a-zA-Z0-9]")) score++;
 
-            if (score <= 1)
+            if (lblPwdStatus != null)
             {
-                strengthBar.BackColor = ColorDanger;
-                strengthBar.Width = 40;
-                lblStrength.Text = "Strength: Weak";
-                lblStrength.ForeColor = ColorDanger;
-            }
-            else if (score <= 3)
-            {
-                strengthBar.BackColor = Color.FromArgb(245, 158, 11);
-                strengthBar.Width = 90;
-                lblStrength.Text = "Strength: Medium";
-                lblStrength.ForeColor = Color.FromArgb(245, 158, 11);
-            }
-            else
-            {
-                strengthBar.BackColor = ColorSuccess;
-                strengthBar.Width = 160;
-                lblStrength.Text = "Strength: Strong";
-                lblStrength.ForeColor = ColorSuccess;
-            }
-        }
-
-        private void HandleChangePassword()
-        {
-            string current = txtCurrentPass.Text;
-            string newPass = txtNewPass.Text;
-            string conf = txtConfirmPass.Text;
-
-            if (string.IsNullOrEmpty(current))
-            {
-                ShowFeedback("Please enter your current master password.", false);
-                txtCurrentPass.Focus();
-                return;
-            }
-            if (string.IsNullOrEmpty(newPass) || newPass.Length < 6)
-            {
-                ShowFeedback("New master password must be at least 6 characters.", false);
-                txtNewPass.Focus();
-                return;
-            }
-            if (newPass != conf)
-            {
-                ShowFeedback("New passwords do not match.", false);
-                txtConfirmPass.Focus();
-                return;
-            }
-
-            string error;
-            if (service.ChangeMasterPassword(current, newPass, out error))
-            {
-                ShowFeedback("✓ Master password updated & database re-encrypted!", true);
-                txtCurrentPass.Text = string.Empty;
-                txtNewPass.Text = string.Empty;
-                txtConfirmPass.Text = string.Empty;
-                UpdateStrength();
-            }
-            else
-            {
-                ShowFeedback("⚠ " + error, false);
-                txtCurrentPass.SelectAll();
-                txtCurrentPass.Focus();
+                if (score <= 1)
+                {
+                    newPwdStrengthScore = 1;
+                    lblPwdStatus.Text = "Weak";
+                    lblPwdStatus.ForeColor = WinColors.WeakText;
+                }
+                else if (score <= 3)
+                {
+                    newPwdStrengthScore = 2;
+                    lblPwdStatus.Text = "Medium";
+                    lblPwdStatus.ForeColor = WinColors.MediumText;
+                }
+                else
+                {
+                    newPwdStrengthScore = 4;
+                    lblPwdStatus.Text = "Strong (128-bit)";
+                    lblPwdStatus.ForeColor = WinColors.SuccessLight;
+                }
             }
         }
 
-        private void UpdateHotkeyStatus()
+        public SettingsForm(CredentialService credService) : this(credService, null)
         {
-            if (lblHotkeyStatus == null || pickerHotkey == null) return;
+        }
 
-            if (chkEnableHotkey != null && !chkEnableHotkey.Checked)
-            {
-                lblHotkeyStatus.Text = "○ Global hotkey is currently disabled.";
-                lblHotkeyStatus.ForeColor = ColorTextMuted;
-                return;
-            }
+        public SettingsForm(CredentialService credService, AppSettings appSettings)
+        {
+            if (credService == null) throw new ArgumentNullException("credService");
+            this.service = credService;
+            this.settings = appSettings ?? AppSettings.Load();
 
-            if (pickerHotkey.HasConflict)
+            InitializeComponent();
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
             {
-                lblHotkeyStatus.Text = pickerHotkey.WarningMessage;
-                lblHotkeyStatus.ForeColor = ColorDanger;
-            }
-            else
-            {
-                string combo = GlobalHotkeyManager.FormatHotkey(pickerHotkey.SelectedModifiers, pickerHotkey.SelectedKey);
-                lblHotkeyStatus.Text = "✓ Shortcut is available & valid: [" + combo + "]";
-                lblHotkeyStatus.ForeColor = ColorSuccess;
+                CreateParams cp = base.CreateParams;
+                cp.ClassStyle |= Win32Helper.CS_DROPSHADOW;
+                cp.Style |= Win32Helper.WS_MINIMIZEBOX;
+                return cp;
             }
         }
 
-        private void HandleSaveHotkey()
+        protected override void OnHandleCreated(EventArgs e)
         {
-            appSettings.HotkeyEnabled = chkEnableHotkey.Checked;
-            appSettings.HotkeyModifiers = pickerHotkey.SelectedModifiers;
-            appSettings.HotkeyKey = pickerHotkey.SelectedKey;
-            appSettings.Save();
-
-            if (SettingsSaved != null)
-            {
-                SettingsSaved(this, EventArgs.Empty);
-            }
-
-            UpdateHotkeyStatus();
+            base.OnHandleCreated(e);
+            Win32Helper.ApplyWindowShadow(this.Handle);
         }
 
-        private void HandleSaveBehavior()
+        protected override void OnLoad(EventArgs e)
         {
-            appSettings.RunOnStartup = chkStartup.Checked;
-            appSettings.CloseToTray = chkCloseToTray.Checked;
-            appSettings.Save();
-
-            if (SettingsSaved != null)
-            {
-                SettingsSaved(this, EventArgs.Empty);
-            }
-
-            lblPrefsMessage.Text = "✓ Preferences saved successfully!";
-            lblPrefsMessage.ForeColor = ColorSuccess;
-            lblPrefsMessage.Visible = true;
+            base.OnLoad(e);
+            Win32Helper.ApplyWindowShadow(this.Handle);
         }
 
-        private void ShowFeedback(string text, bool isSuccess)
+        private void InitializeComponent()
         {
-            lblMessage.Text = text;
-            lblMessage.ForeColor = isSuccess ? ColorSuccess : ColorDanger;
-            lblMessage.Visible = true;
+            this.Text = "KeyCraft — Security & Settings";
+            this.Size = new Size(620, 760);
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.StartPosition = FormStartPosition.CenterParent;
+            this.BackColor = WinColors.Window;
+            this.ForeColor = WinColors.TextWhite;
+            this.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            this.DoubleBuffered = true;
+            this.KeyPreview = true;
+
+            // Form border painting
+            this.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(WinColors.Border, 1f))
+                {
+                    pe.Graphics.DrawRectangle(p, 0, 0, this.Width - 1, this.Height - 1);
+                }
+            };
+            this.Resize += delegate { this.Invalidate(); };
+
+            // ==========================================
+            // 1. TITLE BAR (Height 36)
+            // ==========================================
+            panelTitleBar = new Panel();
+            panelTitleBar.Dock = DockStyle.Top;
+            panelTitleBar.Height = 36;
+            panelTitleBar.BackColor = WinColors.Window;
+            panelTitleBar.MouseDown += (s, e) => Win32Helper.DragWindow(this.Handle, e);
+
+            Panel pnlIcon = new Panel();
+            pnlIcon.Location = new Point(14, 10);
+            pnlIcon.Size = new Size(16, 16);
+            pnlIcon.BackColor = Color.Transparent;
+            pnlIcon.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                Bitmap bmp = IconResources.GetIcon("shield");
+                if (bmp != null) IconHelper.DrawTintedIcon(pe.Graphics, bmp, new Rectangle(0, 0, 16, 16), WinColors.Accent);
+            };
+            pnlIcon.MouseDown += (s, e) => Win32Helper.DragWindow(this.Handle, e);
+            panelTitleBar.Controls.Add(pnlIcon);
+
+            Label lblTitle = new Label();
+            lblTitle.UseMnemonic = false;
+            lblTitle.Text = "KeyCraft — Security & Settings";
+            lblTitle.Font = new Font("Segoe UI", 9f, FontStyle.Regular);
+            lblTitle.ForeColor = WinColors.TextSecondary;
+            lblTitle.Location = new Point(36, 9);
+            lblTitle.AutoSize = true;
+            lblTitle.MouseDown += (s, e) => Win32Helper.DragWindow(this.Handle, e);
+            panelTitleBar.Controls.Add(lblTitle);
+
+            // Caption Buttons Container
+            Panel pnlCaptions = new Panel();
+            pnlCaptions.Dock = DockStyle.Right;
+            pnlCaptions.Size = new Size(92, 36);
+
+            btnMin = new TitleBarButton(TitleButtonType.Minimize);
+            btnMin.Location = new Point(0, 0);
+            btnMin.Size = new Size(46, 36);
+            btnMin.Click += delegate { this.WindowState = FormWindowState.Minimized; };
+            pnlCaptions.Controls.Add(btnMin);
+
+            btnClose = new TitleBarButton(TitleButtonType.Close);
+            btnClose.Location = new Point(46, 0);
+            btnClose.Size = new Size(46, 36);
+            btnClose.Click += delegate { this.Close(); };
+            pnlCaptions.Controls.Add(btnClose);
+
+            panelTitleBar.Controls.Add(pnlCaptions);
+
+            Panel pnlTitleDivider = new Panel();
+            pnlTitleDivider.Dock = DockStyle.Bottom;
+            pnlTitleDivider.Height = 1;
+            pnlTitleDivider.BackColor = WinColors.BorderSubtle;
+            panelTitleBar.Controls.Add(pnlTitleDivider);
+
+            // ==========================================
+            // 2. STICKY FOOTER COMMAND BAR (Height 56)
+            // End-to-end division matching Title Bar, with comfortable 12px vertical spacing
+            // ==========================================
+            Panel panelFooter = new Panel();
+            panelFooter.Dock = DockStyle.Bottom;
+            panelFooter.Height = 56;
+            panelFooter.BackColor = WinColors.Chrome;
+            panelFooter.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(WinColors.BorderSubtle, 1f))
+                {
+                    pe.Graphics.DrawLine(p, 0, 0, panelFooter.Width, 0);
+                }
+            };
+
+            // Two distinct buttons on the right: Close (Secondary) and Done (Primary Accent)
+            ModernButton btnCloseFooter = new ModernButton();
+            btnCloseFooter.Text = "Close";
+            btnCloseFooter.Size = new Size(84, 32);
+            btnCloseFooter.Location = new Point(panelFooter.ClientSize.Width - 16 - 84 - 10 - 84, 12);
+            btnCloseFooter.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnCloseFooter.NormalBg = WinColors.BtnSecondary;
+            btnCloseFooter.HoverBg = WinColors.BtnSecondaryHover;
+            btnCloseFooter.BorderColor = WinColors.Border;
+            btnCloseFooter.NormalFg = WinColors.TextWhite;
+            btnCloseFooter.Click += delegate
+            {
+                this.DialogResult = DialogResult.Cancel;
+                this.Close();
+            };
+            panelFooter.Controls.Add(btnCloseFooter);
+
+            ModernButton btnDone = new ModernButton();
+            btnDone.Text = "Done";
+            btnDone.Size = new Size(84, 32);
+            btnDone.Location = new Point(panelFooter.ClientSize.Width - 16 - 84, 12);
+            btnDone.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnDone.NormalBg = WinColors.Accent;
+            btnDone.HoverBg = WinColors.AccentHover;
+            btnDone.PressedBg = WinColors.AccentPressed;
+            btnDone.BorderColor = WinColors.Accent;
+            btnDone.NormalFg = Color.White;
+            btnDone.Click += delegate
+            {
+                HandleSaveHotkey();
+                HandleSaveBehavior();
+                if (settings != null) settings.Save();
+                if (SettingsSaved != null) SettingsSaved(this, EventArgs.Empty);
+                this.DialogResult = DialogResult.OK;
+                this.Close();
+            };
+            panelFooter.Controls.Add(btnDone);
+
+            // ==========================================
+            // 3. MAIN SCROLLABLE VIEWPORT WITH CUSTOM DARK SCROLLBAR
+            // ==========================================
+            panelViewport = new Panel();
+            panelViewport.Dock = DockStyle.Fill;
+            panelViewport.BackColor = WinColors.Window;
+            panelViewport.AutoScroll = false; // No ugly Win32 white scrollbars!
+
+            customScrollBar = new DarkScrollBar();
+            customScrollBar.Dock = DockStyle.Right;
+            customScrollBar.Width = 8;
+            customScrollBar.Visible = false;
+            customScrollBar.ValueChanged += delegate
+            {
+                if (panelContent != null)
+                {
+                    panelContent.Top = -customScrollBar.Value;
+                }
+            };
+            panelViewport.Controls.Add(customScrollBar);
+
+            panelContent = new Panel();
+            panelContent.Location = new Point(0, 0);
+            panelContent.Width = 620;
+            panelContent.BackColor = WinColors.Window;
+            panelViewport.Controls.Add(panelContent);
+
+            // Enable mouse wheel scrolling
+            MouseEventHandler wheelHandler = delegate (object s, MouseEventArgs e)
+            {
+                if (customScrollBar.Visible)
+                {
+                    customScrollBar.Value -= (e.Delta / 3);
+                }
+            };
+            panelViewport.MouseWheel += wheelHandler;
+            panelContent.MouseWheel += wheelHandler;
+
+            int cardWidth = 588;
+            int curY = 12;
+
+            // ------------------------------------------
+            // GROUP 1: Master Password Management
+            // ------------------------------------------
+            Panel card1 = CreateCard(cardWidth, 352, curY);
+            panelContent.Controls.Add(card1);
+            card1.MouseWheel += wheelHandler;
+            curY += 366;
+
+            bool hasActiveVault = service != null && service.HasActiveVault;
+            string vaultCardDesc = hasActiveVault
+                ? "Change the master password used to derive AES-256 keys and re-encrypt the vault."
+                : "No vault currently loaded. Open or create an encrypted vault to manage its master password.";
+            AddCardHeader(card1, "key", "Master Password Management", vaultCardDesc, hasActiveVault ? (Color?)null : WinColors.TextSubtle);
+
+            // Current Password
+            Label lblCurr = CreateFieldLabel("CURRENT MASTER PASSWORD", 16, 70);
+            card1.Controls.Add(lblCurr);
+            txtCurrentPwd = CreateInputBox(card1, 16, 90, cardWidth - 32, true);
+            txtCurrentPwd.Enabled = hasActiveVault;
+
+            // New Password
+            Label lblNew = CreateFieldLabel("NEW MASTER PASSWORD", 16, 132);
+            card1.Controls.Add(lblNew);
+            txtNewPwd = CreateInputBox(card1, 16, 152, cardWidth - 32, true);
+            txtNewPwd.Enabled = hasActiveVault;
+
+            // Strength bar
+            Panel pnlStrength = new Panel();
+            pnlStrength.Location = new Point(16, 192);
+            pnlStrength.Size = new Size(cardWidth - 32, 16);
+            pnlStrength.BackColor = Color.Transparent;
+
+            Label lblStrTag = new Label();
+            lblStrTag.Text = "Strength:";
+            lblStrTag.Font = new Font("Segoe UI", 8f, FontStyle.Regular);
+            lblStrTag.ForeColor = WinColors.TextMuted;
+            lblStrTag.Location = new Point(0, 0);
+            lblStrTag.AutoSize = true;
+            pnlStrength.Controls.Add(lblStrTag);
+
+            lblPwdStatus = new Label();
+            lblPwdStatus.Text = "None";
+            lblPwdStatus.Font = new Font("Segoe UI", 8f, FontStyle.Bold);
+            lblPwdStatus.ForeColor = WinColors.TextMuted;
+            lblPwdStatus.Dock = DockStyle.Right;
+            lblPwdStatus.AutoSize = true;
+            pnlStrength.Controls.Add(lblPwdStatus);
+
+            card1.Controls.Add(pnlStrength);
+
+            // 4 dynamic segments matching MasterPasswordForm
+            pnlStrengthBar = new Panel();
+            pnlStrengthBar.Location = new Point(16, 212);
+            pnlStrengthBar.Size = new Size(cardWidth - 32, 4);
+            pnlStrengthBar.BackColor = Color.Transparent;
+            pnlStrengthBar.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                int segW = (pnlStrengthBar.Width - 9) / 4;
+                Color activeColor = (newPwdStrengthScore >= 4) ? WinColors.Success :
+                                    (newPwdStrengthScore >= 2) ? WinColors.MediumText :
+                                    (newPwdStrengthScore == 1) ? WinColors.WeakText : WinColors.BorderSubtle;
+
+                for (int i = 0; i < 4; i++)
+                {
+                    bool isFilled = (newPwdStrengthScore >= 4) ||
+                                    (newPwdStrengthScore >= 2 && i < 2) ||
+                                    (newPwdStrengthScore == 1 && i < 1);
+                    Color segColor = isFilled ? activeColor : WinColors.BorderSubtle;
+                    using (SolidBrush b = new SolidBrush(segColor))
+                    {
+                        pe.Graphics.FillRectangle(b, i * (segW + 3), 0, segW, 4);
+                    }
+                }
+            };
+            card1.Controls.Add(pnlStrengthBar);
+
+            txtNewPwd.TextChanged += delegate
+            {
+                UpdateNewPasswordStrength(txtNewPwd.Text);
+                pnlStrengthBar.Invalidate();
+            };
+
+            // Confirm Password (with extra spacing after strength)
+            Label lblConf = CreateFieldLabel("CONFIRM NEW PASSWORD", 16, 236);
+            card1.Controls.Add(lblConf);
+            txtConfirmPwd = CreateInputBox(card1, 16, 256, cardWidth - 32, false);
+            txtConfirmPwd.Enabled = hasActiveVault;
+
+            txtCurrentPass = txtCurrentPwd;
+            txtNewPass = txtNewPwd;
+            txtConfirmPass = txtConfirmPwd;
+
+            // Update Master Password Button (with generous spacing after text box)
+            ModernButton btnUpdatePwd = new ModernButton();
+            btnUpdatePwd.Text = "Update Master Password";
+            btnUpdatePwd.IconName = "refresh";
+            btnUpdatePwd.IconSize = 13;
+            btnUpdatePwd.NormalBg = WinColors.Accent;
+            btnUpdatePwd.HoverBg = WinColors.AccentHover;
+            btnUpdatePwd.PressedBg = WinColors.AccentPressed;
+            btnUpdatePwd.BorderColor = WinColors.Accent;
+            btnUpdatePwd.NormalFg = Color.White;
+            btnUpdatePwd.Size = new Size(220, 32);
+            btnUpdatePwd.Location = new Point(16, 304);
+            btnUpdatePwd.Enabled = hasActiveVault;
+            btnUpdatePwd.Click += delegate
+            {
+                if (service == null || !service.HasActiveVault)
+                {
+                    MessageBox.Show(this, "No vault is currently loaded. Please open or create a vault first.", "No Active Vault", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                string err;
+                bool ok = service.ChangeMasterPassword(txtCurrentPwd.Text, txtNewPwd.Text, txtConfirmPwd.Text, out err);
+                if (ok)
+                {
+                    MessageBox.Show(this, "Master password updated and vault re-encrypted successfully!", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    txtCurrentPwd.Text = string.Empty;
+                    txtNewPwd.Text = string.Empty;
+                    txtConfirmPwd.Text = string.Empty;
+                    UpdateNewPasswordStrength(string.Empty);
+                    pnlStrengthBar.Invalidate();
+                }
+                else
+                {
+                    MessageBox.Show(this, err, "Validation Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            };
+            card1.Controls.Add(btnUpdatePwd);
+
+            lblMessage = new Label();
+            lblMessage.AutoSize = true;
+            lblMessage.Location = new Point(245, 312);
+            lblMessage.ForeColor = WinColors.Success;
+            lblMessage.Visible = false;
+            card1.Controls.Add(lblMessage);
+
+            // ------------------------------------------
+            // GROUP 2: Global Activation Shortcut
+            // ------------------------------------------
+            // ------------------------------------------
+            // GROUP 2: Global Hotkey
+            // ------------------------------------------
+            Panel card2 = CreateCard(cardWidth, 180, curY);
+            panelContent.Controls.Add(card2);
+            card2.MouseWheel += wheelHandler;
+            curY += 194;
+
+            AddCardHeader(card2, "keyboard", "Global Activation Shortcut", "Press this shortcut from anywhere in Windows to restore KeyCraft from system tray.");
+
+            chkHotkey = new WinCheckbox();
+            chkHotkey.Text = "Enable System-Wide Global Hotkey";
+            chkHotkey.Checked = (settings != null) ? settings.HotkeyEnabled : true;
+            chkHotkey.Location = new Point(16, 70);
+            chkHotkey.Size = new Size(320, 20);
+            chkHotkey.CheckedChanged += delegate
+            {
+                HandleSaveHotkey();
+            };
+            card2.Controls.Add(chkHotkey);
+            chkEnableHotkey = chkHotkey;
+
+            pickerHotkey = new HotkeyPickerControl();
+            pickerHotkey.Location = new Point(16, 96);
+            pickerHotkey.Size = new Size(cardWidth - 32, 38);
+            if (settings != null)
+            {
+                pickerHotkey.SetHotkey(settings.HotkeyModifiers, settings.HotkeyKey);
+            }
+            pickerHotkey.HotkeyChanged += delegate
+            {
+                HandleSaveHotkey();
+            };
+            card2.Controls.Add(pickerHotkey);
+
+            // Reset to default button
+            ModernButton btnResetHot = new ModernButton();
+            btnResetHot.Text = "Reset to Default (Ctrl+Alt+K)";
+            btnResetHot.Size = new Size(180, 26);
+            btnResetHot.Location = new Point(16, 142);
+            btnResetHot.Click += delegate
+            {
+                chkHotkey.Checked = true;
+                if (pickerHotkey != null)
+                {
+                    pickerHotkey.SetHotkey(0x0001 | 0x0002, Keys.K);
+                }
+                HandleSaveHotkey();
+            };
+            card2.Controls.Add(btnResetHot);
+
+            // ------------------------------------------
+            // GROUP 3: Application Behavior & Startup
+            // Auto-saving options without clutter
+            // ------------------------------------------
+            Panel card3 = CreateCard(cardWidth, 136, curY);
+            panelContent.Controls.Add(card3);
+            card3.MouseWheel += wheelHandler;
+            curY += 150;
+
+            AddCardHeader(card3, "settings", "Application Behavior & Startup", "Configure system startup integration and window title bar close behavior.");
+
+            chkStartLogin = new WinCheckbox();
+            chkStartLogin.Text = "Start KeyCraft on Windows login (run silently in system tray)";
+            chkStartLogin.Checked = (settings != null) ? settings.RunOnStartup : false;
+            chkStartLogin.Location = new Point(16, 70);
+            chkStartLogin.Size = new Size(480, 20);
+            chkStartLogin.CheckedChanged += delegate
+            {
+                if (settings != null)
+                {
+                    settings.RunOnStartup = chkStartLogin.Checked;
+                    settings.Save();
+                }
+            };
+            card3.Controls.Add(chkStartLogin);
+            chkStartup = chkStartLogin;
+
+            chkMinimizeTray = new WinCheckbox();
+            chkMinimizeTray.Text = "Close button (✕) minimizes to system tray instead of quitting";
+            chkMinimizeTray.Checked = (settings != null) ? settings.CloseToTray : false;
+            chkMinimizeTray.Location = new Point(16, 98);
+            chkMinimizeTray.Size = new Size(480, 20);
+            chkMinimizeTray.CheckedChanged += delegate
+            {
+                if (settings != null)
+                {
+                    settings.CloseToTray = chkMinimizeTray.Checked;
+                    settings.Save();
+                }
+            };
+            card3.Controls.Add(chkMinimizeTray);
+            chkCloseToTray = chkMinimizeTray;
+
+            // Finalize panelContent height
+            panelContent.Height = curY + 12;
+
+            // Viewport resize layout for custom scrollbar
+            panelViewport.Resize += delegate
+            {
+                int vpW = panelViewport.ClientSize.Width;
+                int vpH = panelViewport.ClientSize.Height;
+
+                bool needScroll = panelContent.Height > vpH;
+                customScrollBar.Visible = needScroll;
+                customScrollBar.Height = vpH;
+                customScrollBar.ViewSize = vpH;
+                customScrollBar.Maximum = panelContent.Height;
+
+                panelContent.Width = vpW - (needScroll ? 10 : 0);
+            };
+
+            // Assemble Form (WinForms docking: Controls added earlier dock inside controls added later)
+            // 1. Fill viewport added first so it fills between top and bottom
+            this.Controls.Add(panelViewport);
+            // 2. Edge-to-edge footer docked to form bottom
+            this.Controls.Add(panelFooter);
+            // 3. Edge-to-edge title bar docked to form top
+            this.Controls.Add(panelTitleBar);
+        }
+
+        private Panel CreateCard(int w, int h, int y)
+        {
+            Panel card = new Panel();
+            card.Size = new Size(w, h);
+            card.Location = new Point(16, y);
+            card.BackColor = WinColors.Card;
+            card.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(WinColors.Border, 1f))
+                {
+                    pe.Graphics.DrawRectangle(p, 0, 0, card.Width - 1, card.Height - 1);
+                }
+            };
+            return card;
+        }
+
+        private void AddCardHeader(Panel card, string iconName, string title, string sub, Color? iconTint = null)
+        {
+            Color tint = iconTint.HasValue ? iconTint.Value : WinColors.Accent;
+            Panel pnlIcon = new Panel();
+            pnlIcon.Location = new Point(16, 14);
+            pnlIcon.Size = new Size(16, 16);
+            pnlIcon.BackColor = Color.Transparent;
+            pnlIcon.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                Bitmap bmp = IconResources.GetIcon(iconName);
+                if (bmp != null) IconHelper.DrawTintedIcon(pe.Graphics, bmp, new Rectangle(0, 0, 16, 16), tint);
+            };
+            card.Controls.Add(pnlIcon);
+
+            Label lblTitle = new Label();
+            lblTitle.UseMnemonic = false;
+            lblTitle.Text = title;
+            lblTitle.Font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
+            lblTitle.ForeColor = WinColors.TextWhite;
+            lblTitle.Location = new Point(38, 12);
+            lblTitle.AutoSize = true;
+            card.Controls.Add(lblTitle);
+
+            // Generous spacing between title and description
+            Label lblSub = new Label();
+            lblSub.Text = sub;
+            lblSub.Font = new Font("Segoe UI", 8.25f, FontStyle.Regular);
+            lblSub.ForeColor = WinColors.TextMuted;
+            lblSub.Location = new Point(16, 38);
+            lblSub.Size = new Size(card.Width - 32, 18);
+            card.Controls.Add(lblSub);
+        }
+
+        private Label CreateFieldLabel(string text, int x, int y)
+        {
+            Label lbl = new Label();
+            lbl.Text = text;
+            lbl.Font = new Font("Segoe UI", 7.5f, FontStyle.Bold);
+            lbl.ForeColor = WinColors.TextSecondary;
+            lbl.Location = new Point(x, y);
+            lbl.AutoSize = true;
+            return lbl;
+        }
+
+        private TextBox CreateInputBox(Panel parent, int x, int y, int w, bool hasEye)
+        {
+            Panel pnl = new Panel();
+            pnl.Location = new Point(x, y);
+            pnl.Size = new Size(w, 28);
+            pnl.BackColor = WinColors.InputBg;
+
+            TextBox tb = new TextBox();
+            tb.BorderStyle = BorderStyle.None;
+            tb.BackColor = WinColors.InputBg;
+            tb.ForeColor = WinColors.TextWhite;
+            tb.Font = new Font("Consolas", 9.5f, FontStyle.Regular);
+            tb.UseSystemPasswordChar = true;
+            tb.Location = new Point(8, 6);
+            tb.Size = new Size(hasEye ? w - 38 : w - 16, 18);
+
+            pnl.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(tb.Focused ? WinColors.Accent : WinColors.Border, 1f))
+                {
+                    pe.Graphics.DrawRectangle(p, 0, 0, pnl.Width - 1, pnl.Height - 1);
+                }
+            };
+            tb.GotFocus += (s, e) => pnl.Invalidate();
+            tb.LostFocus += (s, e) => pnl.Invalidate();
+            pnl.Controls.Add(tb);
+
+            if (hasEye)
+            {
+                ModernButton eye = new ModernButton();
+                eye.Size = new Size(26, 22);
+                eye.Location = new Point(w - 29, 3);
+                eye.NormalBg = Color.Transparent;
+                eye.HoverBg = WinColors.BtnSecondaryHover;
+                eye.BorderColor = Color.Transparent;
+                eye.IconName = "eye";
+                eye.IconSize = 13;
+                bool rev = false;
+                eye.Click += delegate
+                {
+                    rev = !rev;
+                    tb.UseSystemPasswordChar = !rev;
+                    eye.IconName = rev ? "eye_off" : "eye";
+                    eye.Invalidate();
+                };
+                pnl.Controls.Add(eye);
+            }
+
+            parent.Controls.Add(pnl);
+            return tb;
+        }
+
+        private Label CreateKeyBadge(string text, int x, int y, int w, bool isKeyK)
+        {
+            Label lbl = new Label();
+            lbl.Text = text;
+            lbl.Font = new Font("Consolas", 8f, FontStyle.Bold);
+            lbl.ForeColor = Color.White;
+            lbl.BackColor = isKeyK ? Color.FromArgb(0, 72, 131) : Color.FromArgb(42, 42, 42);
+            lbl.Location = new Point(x, y);
+            lbl.Size = new Size(w, 18);
+            lbl.TextAlign = ContentAlignment.MiddleCenter;
+            lbl.Paint += delegate (object s, PaintEventArgs pe)
+            {
+                using (Pen p = new Pen(isKeyK ? WinColors.Accent : Color.FromArgb(68, 68, 68), 1f))
+                {
+                    pe.Graphics.DrawRectangle(p, 0, 0, lbl.Width - 1, lbl.Height - 1);
+                }
+            };
+            return lbl;
+        }
+
+        private Label CreatePlusLabel(string text, int x, int y)
+        {
+            Label lbl = new Label();
+            lbl.Text = text;
+            lbl.Font = new Font("Segoe UI", 7.5f, FontStyle.Regular);
+            lbl.ForeColor = Color.FromArgb(119, 119, 119);
+            lbl.Location = new Point(x, y);
+            lbl.Size = new Size(10, 16);
+            return lbl;
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -737,12 +723,54 @@ namespace PasswordGui
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
-        // Native Dragging Support
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
-        [System.Runtime.InteropServices.DllImport("user32.dll")]
-        private static extern bool ReleaseCapture();
-        private const int WM_NCLBUTTONDOWN = 0xA1;
-        private const int HTCAPTION = 0x2;
+        private void HandleSaveBehavior()
+        {
+            if (settings != null)
+            {
+                if (chkStartup != null) settings.RunOnStartup = chkStartup.Checked;
+                if (chkCloseToTray != null) settings.CloseToTray = chkCloseToTray.Checked;
+                settings.Save();
+            }
+        }
+
+        private void HandleSaveHotkey()
+        {
+            if (settings != null)
+            {
+                if (chkEnableHotkey != null) settings.HotkeyEnabled = chkEnableHotkey.Checked;
+                if (pickerHotkey != null)
+                {
+                    settings.HotkeyModifiers = pickerHotkey.CurrentModifiers;
+                    settings.HotkeyKey = pickerHotkey.CurrentKey;
+                }
+                settings.Save();
+            }
+        }
+
+        private void HandleChangePassword()
+        {
+            if (lblMessage == null) lblMessage = new Label();
+            if (service == null || !service.HasActiveVault)
+            {
+                lblMessage.Text = "No vault loaded.";
+                lblMessage.Visible = true;
+                return;
+            }
+            string cur = txtCurrentPass != null ? txtCurrentPass.Text : (txtCurrentPwd != null ? txtCurrentPwd.Text : "");
+            string np = txtNewPass != null ? txtNewPass.Text : (txtNewPwd != null ? txtNewPwd.Text : "");
+            string cp = txtConfirmPass != null ? txtConfirmPass.Text : (txtConfirmPwd != null ? txtConfirmPwd.Text : "");
+            string err;
+            bool ok = service.ChangeMasterPassword(cur, np, cp, out err);
+            if (ok)
+            {
+                lblMessage.Text = "Master password successfully updated!";
+                lblMessage.Visible = true;
+            }
+            else
+            {
+                lblMessage.Text = "Error: " + err;
+                lblMessage.Visible = true;
+            }
+        }
     }
 }

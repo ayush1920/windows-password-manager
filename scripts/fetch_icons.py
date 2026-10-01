@@ -13,7 +13,19 @@ icons = {
     "eye_off": "eye-off.svg",
     "key": "key-round.svg",
     "search": "search.svg",
-    "shield": "shield-check.svg"
+    "shield": "shield-check.svg",
+    "settings": "settings.svg",
+    "lock": "lock.svg",
+    "unlock": "lock-open.svg",
+    "database": "database.svg",
+    "folder": "folder-open.svg",
+    "user": "user.svg",
+    "keyboard": "keyboard.svg",
+    "check": "check-circle-2.svg",
+    "globe": "globe.svg",
+    "chevron_up": "chevron-up.svg",
+    "chevron_down": "chevron-down.svg",
+    "xmark": "x.svg"
 }
 
 os.makedirs("assets/icons", exist_ok=True)
@@ -35,8 +47,6 @@ for key, svg_name in icons.items():
     
     # Render to 32x32 high-resolution transparent PNG with PyMuPDF
     doc = fitz.open(stream=svg_white.encode('utf-8'), filetype='svg')
-    # Lucide default is 24x24. For 32x32 or 48x48:
-    # 24 * (96/72) = 32px at 96 dpi!
     pix = doc[0].get_pixmap(alpha=True, dpi=96)
     png_path = f"assets/icons/{key}.png"
     pix.save(png_path)
@@ -56,7 +66,7 @@ cs_lines = [
     "using System.Drawing;",
     "using System.IO;",
     "",
-    "namespace PasswordManager",
+    "namespace PasswordGui",
     "{",
     "    public static class IconResources",
     "    {",
@@ -99,4 +109,4 @@ cs_lines.extend([
 with open("IconResources.cs", "w", encoding="utf-8") as f:
     f.write("\n".join(cs_lines))
 
-print("Generated IconResources.cs successfully!")
+print("Generated IconResources.cs successfully with all icons!")

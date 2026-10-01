@@ -9,6 +9,16 @@ using System.Windows.Forms;
 namespace PasswordGui
 {
     /// <summary>
+    /// Contract for UI windows that handle single-instance wake signals and forwarded file parameters.
+    /// Decouples IPC controller infrastructure from concrete presentation layer classes.
+    /// </summary>
+    public interface ISingleInstanceTarget
+    {
+        void RestoreFromTray(bool maximize);
+        void SwitchToVaultFile(string filePath, bool updateSettings = true);
+    }
+
+    /// <summary>
     /// Robust single-instance enforcement and IPC engine for KeyCraft.
     /// Uses a system-wide Mutex for primary detection and high-speed local Named Pipes
     /// for reliable inter-process communication without touching hidden GDI+ or .NET runtime windows.
@@ -207,10 +217,10 @@ namespace PasswordGui
                     {
                         bool maximize = message.Contains("MAXIMIZE");
 
-                        MainForm main = form as MainForm;
-                        if (main != null)
+                        ISingleInstanceTarget target = form as ISingleInstanceTarget;
+                        if (target != null)
                         {
-                            main.RestoreFromTray(maximize);
+                            target.RestoreFromTray(maximize);
 
                             // Optional file forwarding (e.g. RESTORE|OPEN:C:\path\to\vault.kcrypt)
                             int openIdx = message.IndexOf("OPEN:", StringComparison.OrdinalIgnoreCase);
@@ -219,7 +229,7 @@ namespace PasswordGui
                                 string filePath = message.Substring(openIdx + 5).Trim();
                                 if (File.Exists(filePath))
                                 {
-                                    main.SwitchToVaultFile(filePath);
+                                    target.SwitchToVaultFile(filePath, true);
                                 }
                             }
                         }

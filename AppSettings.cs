@@ -22,7 +22,13 @@ namespace PasswordGui
         public int HotkeyModifiers { get; set; } // MOD_CONTROL(2), MOD_ALT(1), MOD_SHIFT(4), MOD_WIN(8)
         public Keys HotkeyKey { get; set; }
         public string LastOpenedVaultPath { get; set; }
+        public string LastFilterBy { get; set; }
         public System.Collections.Generic.List<string> RecentVaults { get; set; }
+        public int WindowX { get; set; }
+        public int WindowY { get; set; }
+        public int WindowWidth { get; set; }
+        public int WindowHeight { get; set; }
+        public bool WindowMaximized { get; set; }
 
         public AppSettings()
         {
@@ -33,48 +39,39 @@ namespace PasswordGui
             HotkeyModifiers = 0x0001 | 0x0002; // Alt + Control
             HotkeyKey = Keys.K;
             RecentVaults = new System.Collections.Generic.List<string>();
-            LastOpenedVaultPath = GetDefaultVaultPath();
+            LastOpenedVaultPath = null;
+            LastFilterBy = "Filter by: SlNo";
+            WindowX = -1;
+            WindowY = -1;
+            WindowWidth = 1280;
+            WindowHeight = 820;
+            WindowMaximized = false;
         }
 
-        public static string GetSettingsFilePath()
+        public static string GetKeyCraftDirectory()
         {
-            string localData = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
-            if (Directory.Exists(localData) && File.Exists(Path.Combine(localData, "settings.conf")))
-            {
-                return Path.Combine(localData, "settings.conf");
-            }
-
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string appDir = Path.Combine(appData, "KeyCraft");
-            if (!Directory.Exists(appDir))
-            {
-                try { Directory.CreateDirectory(appDir); } catch { }
-            }
-            return Path.Combine(appDir, "settings.conf");
-        }
-
-        public static string GetDefaultVaultPath()
-        {
-            // 1. Backwards compatibility: if data/credentials.txt already exists, use it
-            string localData = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "credentials.txt");
-            if (File.Exists(localData))
-            {
-                return Path.GetFullPath(localData);
-            }
-
-            // 2. Default to user's home directory: %USERPROFILE%\KeyCraft\vault.kcrypt
             string userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (string.IsNullOrEmpty(userHome))
             {
                 userHome = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             }
 
-            string targetDir = Path.Combine(userHome, "KeyCraft");
-            if (!Directory.Exists(targetDir))
+            string keyCraftDir = Path.Combine(userHome, "KeyCraft");
+            if (!Directory.Exists(keyCraftDir))
             {
-                try { Directory.CreateDirectory(targetDir); } catch { }
+                try { Directory.CreateDirectory(keyCraftDir); } catch { }
             }
-            return Path.Combine(targetDir, "vault.kcrypt");
+            return keyCraftDir;
+        }
+
+        public static string GetSettingsFilePath()
+        {
+            return Path.Combine(GetKeyCraftDirectory(), "settings.conf");
+        }
+
+        public static string GetDefaultVaultPath()
+        {
+            return Path.Combine(GetKeyCraftDirectory(), "vault.kcrypt");
         }
 
         public void AddRecentVault(string path)
@@ -147,6 +144,30 @@ namespace PasswordGui
                             {
                                 if (!string.IsNullOrEmpty(val)) settings.LastOpenedVaultPath = val;
                             }
+                            else if (string.Equals(key, "LastFilterBy", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (!string.IsNullOrEmpty(val)) settings.LastFilterBy = val;
+                            }
+                            else if (string.Equals(key, "WindowX", StringComparison.OrdinalIgnoreCase))
+                            {
+                                int x; if (int.TryParse(val, out x)) settings.WindowX = x;
+                            }
+                            else if (string.Equals(key, "WindowY", StringComparison.OrdinalIgnoreCase))
+                            {
+                                int y; if (int.TryParse(val, out y)) settings.WindowY = y;
+                            }
+                            else if (string.Equals(key, "WindowWidth", StringComparison.OrdinalIgnoreCase))
+                            {
+                                int w; if (int.TryParse(val, out w)) settings.WindowWidth = w;
+                            }
+                            else if (string.Equals(key, "WindowHeight", StringComparison.OrdinalIgnoreCase))
+                            {
+                                int h; if (int.TryParse(val, out h)) settings.WindowHeight = h;
+                            }
+                            else if (string.Equals(key, "WindowMaximized", StringComparison.OrdinalIgnoreCase))
+                            {
+                                bool m; if (bool.TryParse(val, out m)) settings.WindowMaximized = m;
+                            }
                             else if (string.Equals(key, "RecentVaults", StringComparison.OrdinalIgnoreCase))
                             {
                                 if (!string.IsNullOrEmpty(val))
@@ -195,6 +216,12 @@ namespace PasswordGui
                 sb.AppendLine("HotkeyModifiers=" + HotkeyModifiers);
                 sb.AppendLine("HotkeyKey=" + HotkeyKey);
                 sb.AppendLine("LastOpenedVaultPath=" + (LastOpenedVaultPath ?? string.Empty));
+                sb.AppendLine("WindowX=" + WindowX);
+                sb.AppendLine("WindowY=" + WindowY);
+                sb.AppendLine("WindowWidth=" + WindowWidth);
+                sb.AppendLine("WindowHeight=" + WindowHeight);
+                sb.AppendLine("WindowMaximized=" + WindowMaximized);
+                sb.AppendLine("LastFilterBy=" + (LastFilterBy ?? "Filter by: SlNo"));
                 if (RecentVaults != null && RecentVaults.Count > 0)
                 {
                     sb.AppendLine("RecentVaults=" + string.Join(";", RecentVaults.ToArray()));

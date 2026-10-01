@@ -111,7 +111,7 @@ namespace PasswordGui.Tests
 
         private static string GetTempVaultPath(string name)
         {
-            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "mv_test_scratch");
+            string dir = Path.Combine(Path.GetTempPath(), "keycraft_mv_test_scratch");
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             string path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
@@ -343,8 +343,8 @@ namespace PasswordGui.Tests
         // ====================================================================
         private static void Test_MV05_VaultPortability()
         {
-            string dirA = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "simulated_usb");
-            string dirB = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "simulated_cloud");
+            string dirA = Path.Combine(Path.GetTempPath(), "keycraft_mv_test_scratch", "simulated_usb");
+            string dirB = Path.Combine(Path.GetTempPath(), "keycraft_mv_test_scratch", "simulated_cloud");
             if (!Directory.Exists(dirA)) Directory.CreateDirectory(dirA);
             if (!Directory.Exists(dirB)) Directory.CreateDirectory(dirB);
 

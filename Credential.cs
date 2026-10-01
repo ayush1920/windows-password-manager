@@ -13,18 +13,31 @@ namespace PasswordGui
         public string Username { get; set; }
         public string Password { get; set; }
         public DateTime LastUpdated { get; set; }
+        public string Notes { get; set; }
 
         public Credential()
         {
             Id = Guid.NewGuid().ToString("N");
-            SerialNo = 1;
+            SerialNo = 0;
             Service = string.Empty;
             Username = string.Empty;
             Password = string.Empty;
             LastUpdated = DateTime.Now;
+            Notes = string.Empty;
         }
 
-        public Credential(string service, string username, string password, int serialNo = 1)
+        public Credential(string service, string username, string password, string notes = "")
+        {
+            Id = Guid.NewGuid().ToString("N");
+            SerialNo = 0;
+            Service = service ?? string.Empty;
+            Username = username ?? string.Empty;
+            Password = password ?? string.Empty;
+            LastUpdated = DateTime.Now;
+            Notes = notes ?? string.Empty;
+        }
+
+        public Credential(string service, string username, string password, int serialNo, string notes = "")
         {
             Id = Guid.NewGuid().ToString("N");
             SerialNo = serialNo;
@@ -32,6 +45,7 @@ namespace PasswordGui
             Username = username ?? string.Empty;
             Password = password ?? string.Empty;
             LastUpdated = DateTime.Now;
+            Notes = notes ?? string.Empty;
         }
     }
 }

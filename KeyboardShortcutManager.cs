@@ -97,8 +97,8 @@ namespace PasswordGui
 
         public KeyboardShortcutManager()
         {
-            // 500ms double-tap window with 60ms debounce protection
-            escapeDebouncer = new DoublePressDebouncer(500, 60);
+            // 600ms double-tap window with 50ms debounce protection
+            escapeDebouncer = new DoublePressDebouncer(600, 50);
         }
 
         /// <summary>

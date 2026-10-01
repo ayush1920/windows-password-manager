@@ -60,6 +60,16 @@ namespace PasswordGui
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
+        [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        public static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ShowScrollBar(IntPtr hWnd, int wBar, [MarshalAs(UnmanagedType.Bool)] bool bShow);
+        public const int SB_HORZ = 0;
+        public const int SB_VERT = 1;
+        public const int SB_BOTH = 3;
+
         public static void AllowMessageThroughUAC(uint messageId)
         {
             try

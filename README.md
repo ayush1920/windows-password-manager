@@ -50,7 +50,7 @@ flowchart TD
     D --> F["HMAC-SHA256 Auth Token"]
     E --> G["Encrypted Payload Base64"]
     F --> H["Verify Token Base64"]
-    G --> I["data/credentials.txt (KEYCRAFT_ENC_V1)"]
+    G --> I["$env:USERPROFILE/KeyCraft/vault.kcrypt (KEYCRAFT_ENC_V1)"]
     H --> I
 ```
 
@@ -241,12 +241,9 @@ windows-password-manager/
 │   ├── icons/                    # High-DPI procedural vector iconography (.png / .svg)
 │   └── screenshots/              # Application screenshots and visual previews
 ├── bin/                          # Compiled binaries (ignored by Git)
-├── data/                         # Encrypted vault & local settings (ignored by Git)
 ├── scripts/
 │   ├── build_and_run.bat         # Windows CMD build & run launcher
 │   ├── build_and_run.ps1         # PowerShell build & run script
-│   ├── capture_form.ps1          # Form screenshot utility
-│   ├── capture_window.py         # Window snapshot utility
 │   ├── fetch_icons.py            # Lucide icon asset fetcher
 │   ├── run_multivault_tests.bat  # Batch runner for dedicated KeePass Multi-Vault test suite
 │   ├── run_multivault_tests.ps1  # PowerShell runner for Multi-Vault test suite (13 comprehensive tests)

@@ -58,6 +58,18 @@ namespace PasswordGui
             get { return !string.IsNullOrEmpty(warningMessage); }
         }
 
+        public int CurrentModifiers
+        {
+            get { return selectedModifiers; }
+            set { SelectedModifiers = value; }
+        }
+
+        public Keys CurrentKey
+        {
+            get { return selectedKey; }
+            set { SelectedKey = value; }
+        }
+
         public HotkeyPickerControl()
         {
             this.Size = new Size(340, 42);

@@ -96,7 +96,9 @@ namespace PasswordGui
 
         private static void Test_SafeFileStorage()
         {
-            string testFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_atomic.txt");
+            string testFile = Path.Combine(Path.GetTempPath(), "keycraft_tier1_tests", "test_atomic.txt");
+            string testDir = Path.GetDirectoryName(testFile);
+            if (!Directory.Exists(testDir)) Directory.CreateDirectory(testDir);
             string backupFile = testFile + ".bak";
 
             try
@@ -180,7 +182,9 @@ namespace PasswordGui
 
         private static void Test_HMAC_TamperDetection()
         {
-            string testVault = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_tamper.txt");
+            string testVault = Path.Combine(Path.GetTempPath(), "keycraft_tier1_tests", "test_tamper.txt");
+            string testDir = Path.GetDirectoryName(testVault);
+            if (!Directory.Exists(testDir)) Directory.CreateDirectory(testDir);
             try
             {
                 if (File.Exists(testVault)) File.Delete(testVault);
@@ -259,7 +263,9 @@ namespace PasswordGui
 
         private static void Test_CredentialReordering()
         {
-            string testRepoPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_reorder.txt");
+            string testRepoPath = Path.Combine(Path.GetTempPath(), "keycraft_tier1_tests", "test_reorder.txt");
+            string testDir = Path.GetDirectoryName(testRepoPath);
+            if (!Directory.Exists(testDir)) Directory.CreateDirectory(testDir);
             try
             {
                 if (File.Exists(testRepoPath)) File.Delete(testRepoPath);
@@ -297,7 +303,9 @@ namespace PasswordGui
 
         private static void Test_SearchFiltering()
         {
-            string testSearchPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_search.txt");
+            string testSearchPath = Path.Combine(Path.GetTempPath(), "keycraft_tier1_tests", "test_search.txt");
+            string testDir = Path.GetDirectoryName(testSearchPath);
+            if (!Directory.Exists(testDir)) Directory.CreateDirectory(testDir);
             try
             {
                 if (File.Exists(testSearchPath)) File.Delete(testSearchPath);
@@ -463,7 +471,7 @@ namespace PasswordGui
 
         private static void Test_CredentialRepository_SwitchDatabase()
         {
-            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_vaults");
+            string dir = Path.Combine(Path.GetTempPath(), "keycraft_tier1_tests", "test_vaults");
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
             string file1 = Path.Combine(dir, "vault1.txt");

@@ -17,7 +17,6 @@ if not exist %CSC% (
 )
 
 if not exist "%PROJECT_ROOT%\bin" mkdir "%PROJECT_ROOT%\bin"
-if not exist "%PROJECT_ROOT%\data" mkdir "%PROJECT_ROOT%\data"
 
 taskkill /f /im PasswordManager.exe 2>nul
 

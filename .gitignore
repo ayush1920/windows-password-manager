@@ -3,6 +3,45 @@
 # ==========================================================
 
 # ----------------------------------------------------------
+# Temporary Cache, Scratch & Screenshots (NEVER POISON ROOT)
+# ----------------------------------------------------------
+.cache/
+temp/
+tmp/
+scratch/
+/*.png
+/*.jpg
+/*.jpeg
+/*.bmp
+screenshot*.png
+*.screenshot.png
+!assets/**
+
+# ----------------------------------------------------------
+# Temporary Debug, Scratch & Capture Scripts
+# ----------------------------------------------------------
+scripts/capture_*
+scripts/debug_*
+scripts/scratch_*
+scripts/temp_*
+scripts/test_dock.ps1
+scripts/test_shadow.ps1
+test_*.ps1
+scratch_*.ps1
+diag_*.ps1
+
+# ----------------------------------------------------------
+# Python Caches & Environments
+# ----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# ----------------------------------------------------------
 # CRITICAL: Credentials, Settings & Backups (NEVER COMMIT)
 # ----------------------------------------------------------
 data/
@@ -28,6 +67,8 @@ logs/
 crash.log
 err.log
 out.log
+*.dmp
+*.mdmp
 
 # ----------------------------------------------------------
 # Build Outputs & Executables
@@ -42,16 +83,21 @@ build/
 *.ilk
 *.exp
 *.lib
+TestResults/
 
 # ----------------------------------------------------------
-# IDE & Visual Studio Files
+# IDE & Visual Studio / JetBrains Files
 # ----------------------------------------------------------
 .vs/
 .vscode/
+.idea/
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
+*.userprefs
+*.pidb
+*.DotSettings.user
 
 # ----------------------------------------------------------
 # OS Metadata

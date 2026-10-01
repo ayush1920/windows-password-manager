@@ -78,92 +78,82 @@ namespace PasswordGui
 
                 AppSettings appSettings = AppSettings.Load();
 
-                string repoPath = null;
-                string passedPassword = null;
-                bool startInTray = false;
-                if (args != null && args.Length > 0)
+                string repoPath;
+                string passedPassword;
+                bool startInTray;
+
+                StartupAction action = VaultLifecycle.DetermineStartupAction(args, appSettings, out repoPath, out passedPassword, out startInTray);
+
+                CredentialRepository repository = null;
+                CredentialService service = null;
+
+                switch (action)
                 {
-                    for (int i = 0; i < args.Length; i++)
+                    case StartupAction.OpenMainWithNoVault:
                     {
-                        if ((args[i].Equals("-p", StringComparison.OrdinalIgnoreCase) ||
-                             args[i].Equals("--password", StringComparison.OrdinalIgnoreCase) ||
-                             args[i].Equals("--master-pass", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
+                        // Deterministic: No vault file exists on disk (start from scratch or file/settings deleted).
+                        // Never show an unlock screen for a phantom file! Directly open MainForm in [No Vault Loaded] state.
+                        repository = new CredentialRepository(null);
+                        service = new CredentialService(repository);
+                        RunMainForm(service, startInTray);
+                        break;
+                    }
+
+                    case StartupAction.OpenMainWithVault:
+                    {
+                        // Existing unencrypted vault or successfully unlocked via CLI argument
+                        repository = new CredentialRepository(repoPath);
+                        service = new CredentialService(repository);
+
+                        if (!string.IsNullOrEmpty(passedPassword))
                         {
-                            passedPassword = args[i + 1];
-                            i++;
+                            service.UnlockVault(passedPassword);
                         }
-                        else if (args[i].Equals("--tray", StringComparison.OrdinalIgnoreCase) ||
-                                 args[i].Equals("--min", StringComparison.OrdinalIgnoreCase))
+
+                        appSettings.AddRecentVault(repoPath);
+                        appSettings.Save();
+                        RunMainForm(service, startInTray);
+                        break;
+                    }
+
+                    case StartupAction.PromptUnlockVault:
+                    {
+                        // An actual encrypted .kcrypt vault exists on disk. Prompt user to unlock it.
+                        using (MasterPasswordForm unlockForm = new MasterPasswordForm(MasterPasswordMode.Unlock, repoPath, inAppContext: false))
                         {
-                            startInTray = true;
+                            DialogResult res = unlockForm.ShowDialog();
+                            if (res == DialogResult.OK)
+                            {
+                                string target = unlockForm.SelectedVaultPath;
+                                repository = new CredentialRepository(target);
+                                service = new CredentialService(repository);
+
+                                if (!string.IsNullOrEmpty(unlockForm.ActiveMasterPassword))
+                                {
+                                    service.UnlockVault(unlockForm.ActiveMasterPassword);
+                                }
+
+                                appSettings.AddRecentVault(target);
+                                appSettings.Save();
+                                RunMainForm(service, startInTray);
+                            }
+                            else if (res == DialogResult.Abort)
+                            {
+                                // User explicitly chose "Exit Application"
+                                return;
+                            }
+                            else
+                            {
+                                // User closed dialog (X) or cancelled -> Open MainForm in [No Vault Loaded] state!
+                                // The user is NEVER trapped: they can create a new vault or open another file.
+                                repository = new CredentialRepository(null);
+                                service = new CredentialService(repository);
+                                RunMainForm(service, startInTray);
+                            }
                         }
-                        else if ((args[i].Equals("-f", StringComparison.OrdinalIgnoreCase) ||
-                                  args[i].Equals("--file", StringComparison.OrdinalIgnoreCase) ||
-                                  args[i].Equals("--vault", StringComparison.OrdinalIgnoreCase)) && i + 1 < args.Length)
-                        {
-                            repoPath = args[i + 1];
-                            i++;
-                        }
-                        else if (!args[i].StartsWith("-") && System.IO.File.Exists(args[i]))
-                        {
-                            repoPath = args[i];
-                        }
+                        break;
                     }
                 }
-
-                if (string.IsNullOrEmpty(repoPath))
-                {
-                    if (!string.IsNullOrEmpty(appSettings.LastOpenedVaultPath) && (System.IO.File.Exists(appSettings.LastOpenedVaultPath) || !System.IO.File.Exists(AppSettings.GetDefaultVaultPath())))
-                    {
-                        repoPath = appSettings.LastOpenedVaultPath;
-                    }
-                    else
-                    {
-                        repoPath = AppSettings.GetDefaultVaultPath();
-                    }
-                }
-
-                bool isEncrypted = VaultSecurity.IsVaultEncrypted(repoPath);
-
-                bool unlockedViaCli = false;
-                if (!string.IsNullOrEmpty(passedPassword) && isEncrypted)
-                {
-                    string decrypted;
-                    if (VaultSecurity.UnlockVault(repoPath, passedPassword, out decrypted))
-                    {
-                        unlockedViaCli = true;
-                    }
-                }
-
-                if (!unlockedViaCli)
-                {
-                    MasterPasswordMode initMode = isEncrypted ? MasterPasswordMode.Unlock : MasterPasswordMode.Create;
-                    using (MasterPasswordForm authForm = new MasterPasswordForm(initMode, repoPath))
-                    {
-                        if (authForm.ShowDialog() != DialogResult.OK)
-                        {
-                            return; // Cancelled
-                        }
-                        repoPath = authForm.SelectedVaultPath;
-                    }
-                }
-
-                appSettings.AddRecentVault(repoPath);
-                appSettings.Save();
-
-                // Initialize Database / Repository layer with unlocked vault
-                CredentialRepository repository = new CredentialRepository(repoPath);
-
-                // Initialize Business / Program Logic layer
-                CredentialService service = new CredentialService(repository);
-
-                // Launch Main Layout Form
-                MainForm mainForm = new MainForm(service);
-                if (startInTray)
-                {
-                    mainForm.Load += delegate { mainForm.MinimizeToTray(); };
-                }
-                Application.Run(mainForm);
             }
             catch (Exception ex)
             {
@@ -193,6 +183,16 @@ namespace PasswordGui
                     catch { }
                 }
             }
+        }
+
+        private static void RunMainForm(CredentialService service, bool startInTray)
+        {
+            MainForm mainForm = new MainForm(service);
+            if (startInTray)
+            {
+                mainForm.Load += delegate { mainForm.MinimizeToTray(); };
+            }
+            Application.Run(mainForm);
         }
     }
 }

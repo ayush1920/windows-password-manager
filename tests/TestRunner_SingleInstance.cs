@@ -243,8 +243,9 @@ namespace PasswordGui.Tests
         // ====================================================================
         private static void Test_SI05_FormRestorationFromTray()
         {
-            string vaultPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_si_vault.txt");
-            if (!Directory.Exists(Path.GetDirectoryName(vaultPath))) Directory.CreateDirectory(Path.GetDirectoryName(vaultPath));
+            string scratchDir = Path.Combine(Path.GetTempPath(), "keycraft_si_tests");
+            string vaultPath = Path.Combine(scratchDir, "test_si_vault.txt");
+            if (!Directory.Exists(scratchDir)) Directory.CreateDirectory(scratchDir);
             File.WriteAllText(vaultPath, "1\tTestService\tuser\tpass\t2026-01-01\r\n");
 
             CredentialRepository repo = new CredentialRepository(vaultPath);
@@ -288,8 +289,9 @@ namespace PasswordGui.Tests
         private static void Test_SI06_StrictWindowIsolation()
         {
             // Create a MainForm to ensure GDI+ and .NET helper windows are instantiated in this process
-            string vaultPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data", "test_si_leak.txt");
-            if (!Directory.Exists(Path.GetDirectoryName(vaultPath))) Directory.CreateDirectory(Path.GetDirectoryName(vaultPath));
+            string scratchDir = Path.Combine(Path.GetTempPath(), "keycraft_si_tests");
+            string vaultPath = Path.Combine(scratchDir, "test_si_leak.txt");
+            if (!Directory.Exists(scratchDir)) Directory.CreateDirectory(scratchDir);
             File.WriteAllText(vaultPath, "1\tTestLeak\tuser\tpass\t2026-01-01\r\n");
 
             CredentialRepository repo = new CredentialRepository(vaultPath);

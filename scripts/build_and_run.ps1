@@ -13,7 +13,6 @@ if (-not (Test-Path $cscPath)) {
 
 # Ensure output directories exist
 if (-not (Test-Path "$projectRoot\bin")) { New-Item -ItemType Directory -Path "$projectRoot\bin" | Out-Null }
-if (-not (Test-Path "$projectRoot\data")) { New-Item -ItemType Directory -Path "$projectRoot\data" | Out-Null }
 
 $outputPath = "$projectRoot\bin\PasswordManager.exe"
 # Stop any running instances to avoid file lock
